@@ -19,7 +19,10 @@ mongoose
     useUnifiedTopology: true,
   })
   .then(() => console.log('Database connected'))
-  .catch((err) => console.error('Database connection error:', err));
+  .catch((err) => {
+    console.error('Database connection error:', err);
+    process.exit(1); // Exit the process with an error code
+  });
 
 // Routes
 app.use('/api/orders', ordersRouter);
