@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_REACT_APP_BACKEND_URL;
 
 export const createOrder = async (orderData) => {
   const response = await fetch(`${API_URL}/orders`, {
