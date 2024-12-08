@@ -9,20 +9,12 @@ dotenv.config();
 const app = express();
 
 // Middleware
-const corsOptions = {
-  origin: 'https://unli-wings-7rpoknqwv-poopyy17s-projects.vercel.app', // Replace with your Vercel frontend domain
-  optionsSuccessStatus: 200,
-};
-
-app.use(cors(corsOptions));
+app.use(cors());
 app.use(express.json());
 
 // MongoDB connection
 mongoose
-  .connect(process.env.MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect(process.env.MONGODB_URI)
   .then(() => console.log('Database connected'))
   .catch((err) => console.error('Database connection error:', err));
 
