@@ -32,6 +32,16 @@ app.get('/', (req, res) => {
   res.send('Backend is running');
 });
 
+// Test database connection route
+app.get('/test-db', async (req, res) => {
+  try {
+    const result = await mongoose.connection.db.admin().ping();
+    res.send('Database connection is working');
+  } catch (err) {
+    res.status(500).send('Database connection error');
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
