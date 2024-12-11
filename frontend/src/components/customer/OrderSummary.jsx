@@ -1,19 +1,19 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { useLocation, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardHeader,
   CardContent,
   CardFooter,
-} from '@/components/ui/card';
-import { useToast } from '@/hooks/use-toast';
-import { useOrder } from '../../../context/orderContext';
-import { useState, useEffect } from 'react';
-import { getOrder } from '@/services/api';
-import { motion } from 'framer-motion';
-import { Loader2, Plus, Receipt, ArrowRight } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
+} from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { useOrder } from "../../../context/orderContext";
+import { useState, useEffect } from "react";
+import { getOrder } from "@/services/api";
+import { motion } from "framer-motion";
+import { Loader2, Plus, Receipt, ArrowRight } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 
 const OrderSummary = () => {
   const { toast } = useToast();
@@ -23,6 +23,8 @@ const OrderSummary = () => {
   const { tableNumber, orderId, currentItems: newItems } = location.state || {};
   const [orderDetails, setOrderDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const isUnliwingsItem = (item) => item.isUnliwings === true;
 
   useEffect(() => {
     const fetchOrderDetails = async () => {
@@ -34,16 +36,48 @@ const OrderSummary = () => {
         let mergedItems = order.items;
         if (newItems?.length > 0) {
           mergedItems = [...order.items];
-          newItems.forEach((newItem) => {
-            const existingItem = mergedItems.find(
-              (item) => item.name === newItem.name
+
+          // Handle Unliwings separately
+          const newUnliwings = newItems.find(isUnliwingsItem);
+          const existingUnliwings = mergedItems.find(isUnliwingsItem);
+
+          if (newUnliwings && existingUnliwings) {
+            // Update existing Unliwings with new flavors but keep quantity
+            existingUnliwings.selectedFlavors = newUnliwings.selectedFlavors;
+            existingUnliwings.flavorHistory = [
+              ...(existingUnliwings.flavorHistory || []),
+              newUnliwings.selectedFlavors,
+            ];
+
+            // Filter out new Unliwings since we've merged it
+            const nonUnliwingsItems = newItems.filter(
+              (item) => !isUnliwingsItem(item)
             );
-            if (existingItem) {
-              existingItem.quantity += newItem.quantity;
-            } else {
-              mergedItems.push(newItem);
-            }
-          });
+
+            // Merge other items normally
+            nonUnliwingsItems.forEach((newItem) => {
+              const existingItem = mergedItems.find(
+                (item) => item.name === newItem.name && !isUnliwingsItem(item)
+              );
+              if (existingItem) {
+                existingItem.quantity += newItem.quantity;
+              } else {
+                mergedItems.push(newItem);
+              }
+            });
+          } else {
+            // No existing Unliwings, merge all items normally
+            newItems.forEach((newItem) => {
+              const existingItem = mergedItems.find(
+                (item) => item.name === newItem.name
+              );
+              if (existingItem) {
+                existingItem.quantity += newItem.quantity;
+              } else {
+                mergedItems.push(newItem);
+              }
+            });
+          }
         }
 
         setOrderDetails({
@@ -52,17 +86,17 @@ const OrderSummary = () => {
         });
 
         dispatch({
-          type: 'UPDATE_ITEMS',
+          type: "UPDATE_ITEMS",
           tableNumber,
           items: mergedItems,
           orderId: order._id,
         });
       } catch (error) {
-        console.error('Failed to fetch order:', error);
+        console.error("Failed to fetch order:", error);
         toast({
-          title: 'Error',
-          description: 'Failed to load order details',
-          variant: 'destructive',
+          title: "Error",
+          description: "Failed to load order details",
+          variant: "destructive",
         });
       } finally {
         setIsLoading(false);
@@ -84,14 +118,14 @@ const OrderSummary = () => {
   const confirmOrder = () => {
     if (!orderId) {
       toast({
-        title: 'Error',
-        description: 'Order ID is missing',
-        variant: 'destructive',
+        title: "Error",
+        description: "Order ID is missing",
+        variant: "destructive",
       });
       return;
     }
 
-    navigate('/bill', {
+    navigate("/bill", {
       state: {
         orderItems: accumulatedOrders,
         tableNumber,
@@ -102,7 +136,7 @@ const OrderSummary = () => {
   };
 
   const handleAddMoreItems = () => {
-    navigate('/order', {
+    navigate("/order", {
       state: {
         tableNumber,
         orderId,
@@ -158,12 +192,25 @@ const OrderSummary = () => {
                           <h3 className="font-medium">{item.name}</h3>
                           <div className="flex items-center text-sm text-muted-foreground">
                             <span>
-                              ${item.price.toFixed(2)} × {item.quantity}
+                              ₱{item.price.toFixed(2)} × {item.quantity}
                             </span>
                           </div>
+                          {item.isUnliwings &&
+                            item.selectedFlavors?.length > 0 && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                Current Flavors:{" "}
+                                {item.selectedFlavors.join(", ")}
+                              </div>
+                            )}
+                          {item.isUnliwings &&
+                            item.flavorHistory?.length > 0 && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                Previous Orders: {item.flavorHistory.length}
+                              </div>
+                            )}
                         </div>
                         <p className="font-medium">
-                          ${(item.price * item.quantity).toFixed(2)}
+                          ₱{(item.price * item.quantity).toFixed(2)}
                         </p>
                       </div>
                       {index < accumulatedOrders.length - 1 && (
@@ -181,7 +228,7 @@ const OrderSummary = () => {
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Total Amount</p>
                   <p className="text-2xl font-bold">
-                    ${calculateTotal().toFixed(2)}
+                    ₱{calculateTotal().toFixed(2)}
                   </p>
                 </div>
                 <div className="flex gap-4">

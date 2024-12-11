@@ -1,31 +1,31 @@
-import { useLocation, useNavigate } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast';
-import { generateReceipt, getOrder } from '@/services/api';
-import { useState, useEffect } from 'react';
-import { useOrder } from '../../../context/orderContext';
-import { motion } from 'framer-motion';
-import { Loader2, Receipt, ShoppingBag, ArrowLeft } from 'lucide-react';
-import { Separator } from '@/components/ui/separator';
+import { useLocation, useNavigate } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { generateReceipt, getOrder } from "@/services/api";
+import { useState, useEffect } from "react";
+import { useOrder } from "../../../context/orderContext";
+import { motion } from "framer-motion";
+import { Loader2, Receipt, ShoppingBag, ArrowLeft } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 
 const OrderStatus = {
-  PENDING: 'pending',
-  PREPARING: 'preparing',
-  COMPLETED: 'completed',
-  PAID: 'paid',
+  PENDING: "pending",
+  PREPARING: "preparing",
+  COMPLETED: "completed",
+  PAID: "paid",
 };
 
 const StatusBadge = ({ status }) => {
   const getStatusColor = () => {
     const colors = {
-      [OrderStatus.PENDING]: 'bg-yellow-500',
-      [OrderStatus.PREPARING]: 'bg-blue-500',
-      [OrderStatus.COMPLETED]: 'bg-green-500',
-      [OrderStatus.PAID]: 'bg-green-700',
+      [OrderStatus.PENDING]: "bg-yellow-500",
+      [OrderStatus.PREPARING]: "bg-blue-500",
+      [OrderStatus.COMPLETED]: "bg-green-500",
+      [OrderStatus.PAID]: "bg-green-700",
     };
-    return colors[status] || 'bg-gray-500';
+    return colors[status] || "bg-gray-500";
   };
 
   return <Badge className={`${getStatusColor()} capitalize`}>{status}</Badge>;
@@ -49,18 +49,20 @@ const BillOut = () => {
   const [currentTotal, setCurrentTotal] = useState(initialTotal);
   const [isLoading, setIsLoading] = useState(false);
 
+  const isUnliwingsItem = (item) => item.isUnliwings === true;
+
   const showGenerateReceiptButton =
     !receiptNumber && orderStatus !== OrderStatus.PAID;
   const showProceedToCounter =
     receiptNumber && orderStatus !== OrderStatus.PAID;
 
   const formatDate = () => {
-    return new Date().toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    return new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   };
 
@@ -77,11 +79,11 @@ const BillOut = () => {
           setReceiptNumber(order.receiptNumber);
         }
       } catch (error) {
-        console.error('Failed to fetch order status:', error);
+        console.error("Failed to fetch order status:", error);
         toast({
-          title: 'Error',
-          description: 'Failed to fetch order status',
-          variant: 'destructive',
+          title: "Error",
+          description: "Failed to fetch order status",
+          variant: "destructive",
         });
       }
     };
@@ -92,7 +94,7 @@ const BillOut = () => {
   }, [orderId]);
 
   const handleOrderAgain = () => {
-    navigate('/order', { state: { tableNumber, orderId } });
+    navigate("/order", { state: { tableNumber, orderId } });
   };
 
   const handlePayBill = async () => {
@@ -100,27 +102,27 @@ const BillOut = () => {
       setIsLoading(true);
       if (!orderId) {
         toast({
-          title: 'Error',
-          description: 'Order ID is missing',
-          variant: 'destructive',
+          title: "Error",
+          description: "Order ID is missing",
+          variant: "destructive",
         });
         return;
       }
 
       const receipt = await generateReceipt(orderId);
       setReceiptNumber(receipt.receiptNumber);
-      setOrderStatus('completed');
+      setOrderStatus("completed");
 
       toast({
-        title: 'Receipt Generated',
+        title: "Receipt Generated",
         description: `Receipt #${receipt.receiptNumber}. Please proceed to counter for payment.`,
       });
     } catch (error) {
-      console.error('Receipt generation error:', error);
+      console.error("Receipt generation error:", error);
       toast({
-        title: 'Error',
-        description: 'Failed to generate receipt',
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to generate receipt",
+        variant: "destructive",
       });
     } finally {
       setIsLoading(false);
@@ -181,13 +183,39 @@ const BillOut = () => {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: index * 0.1 }}
-                    className="grid grid-cols-4 text-sm"
                   >
-                    <span className="col-span-2 font-medium">{item.name}</span>
-                    <span className="text-right">{item.quantity}</span>
-                    <span className="text-right">
-                      ${(item.price * item.quantity).toFixed(2)}
-                    </span>
+                    <div className="grid grid-cols-4 text-sm">
+                      <div className="col-span-2">
+                        <span className="font-medium">{item.name}</span>
+                        {item.isUnliwings && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            <div>
+                              Current Flavors:{" "}
+                              {item.selectedFlavors?.join(", ")}
+                            </div>
+                            {item.flavorHistory?.length > 0 && (
+                              <div>
+                                Previous Orders ({item.flavorHistory.length}):
+                                {item.flavorHistory.map((flavors, i) => (
+                                  <div key={i} className="ml-2">
+                                    • {flavors.join(", ")}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-right">{item.quantity}</span>
+                      <span className="text-right">
+                        ${(item.price * item.quantity).toFixed(2)}
+                        {item.isUnliwings && item.flavorHistory?.length > 0 && (
+                          <div className="text-xs text-muted-foreground">
+                            (Unlimited)
+                          </div>
+                        )}
+                      </span>
+                    </div>
                   </motion.div>
                 ))}
               </div>
@@ -222,7 +250,7 @@ const BillOut = () => {
                     ) : (
                       <Receipt className="mr-2 h-4 w-4" />
                     )}
-                    {isLoading ? 'Generating...' : 'Generate Receipt'}
+                    {isLoading ? "Generating..." : "Generate Receipt"}
                   </Button>
                 </div>
               )}
@@ -260,7 +288,7 @@ const BillOut = () => {
                   </div>
                   <Button
                     variant="outline"
-                    onClick={() => navigate('/')}
+                    onClick={() => navigate("/")}
                     className="w-full"
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />

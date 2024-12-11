@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { getOrders, updateOrderStatus, markOrderAsPaid } from '@/services/api';
-import { Loading } from '@/components/ui/loading';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { getOrders, updateOrderStatus, markOrderAsPaid } from "@/services/api";
+import { Loading } from "@/components/ui/loading";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import {
   ArrowUpRight,
   DollarSign,
@@ -13,15 +14,17 @@ import {
   PackageOpen,
   CreditCard,
   CheckCircle,
-} from 'lucide-react';
-import OrdersList from './OrdersList';
-import { useToast } from '@/hooks/use-toast';
-import { cn } from '@/lib/utils';
+} from "lucide-react";
+import OrdersList from "./OrdersList";
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 
 const Dashboard = () => {
   const { toast } = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  const isUnliwingsItem = (item) => item.isUnliwings === true;
 
   useEffect(() => {
     fetchOrders();
@@ -35,9 +38,9 @@ const Dashboard = () => {
       setOrders(data);
     } catch (error) {
       toast({
-        title: 'Error',
-        description: 'Failed to fetch orders',
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to fetch orders",
+        variant: "destructive",
       });
     } finally {
       setLoading(false);
@@ -45,8 +48,12 @@ const Dashboard = () => {
   };
 
   const activeOrders = orders.filter((order) =>
-    ['pending', 'preparing'].includes(order.status)
-  ).length;
+    ["pending", "preparing"].includes(order.status)
+  );
+
+  const activeTablesCount = new Set(
+    activeOrders.map((order) => order.tableNumber)
+  ).size;
 
   const todaysRevenue = orders
     .filter((order) => {
@@ -58,7 +65,7 @@ const Dashboard = () => {
 
   const totalOrders = orders.length;
   const completedOrders = orders.filter(
-    (order) => order.status === 'completed'
+    (order) => order.status === "completed"
   ).length;
 
   const handleStatusUpdate = async (orderId, newStatus) => {
@@ -68,14 +75,14 @@ const Dashboard = () => {
         orders.map((order) => (order._id === orderId ? updatedOrder : order))
       );
       toast({
-        title: 'Status Updated',
+        title: "Status Updated",
         description: `Order status changed to ${newStatus}`,
       });
     } catch (error) {
       toast({
-        title: 'Error',
-        description: 'Failed to update order status',
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to update order status",
+        variant: "destructive",
       });
     }
   };
@@ -87,14 +94,14 @@ const Dashboard = () => {
         orders.map((order) => (order._id === orderId ? updatedOrder : order))
       );
       toast({
-        title: 'Payment Processed',
-        description: 'Order has been marked as paid',
+        title: "Payment Processed",
+        description: "Order has been marked as paid",
       });
     } catch (error) {
       toast({
-        title: 'Error',
-        description: 'Failed to process payment',
-        variant: 'destructive',
+        title: "Error",
+        description: "Failed to process payment",
+        variant: "destructive",
       });
     }
   };
@@ -109,6 +116,16 @@ const Dashboard = () => {
         <p className="mt-2 text-sm text-muted-foreground/70">{description}</p>
       </div>
     );
+  };
+
+  const groupOrdersByTable = (orders) => {
+    return orders.reduce((acc, order) => {
+      if (!acc[order.tableNumber]) {
+        acc[order.tableNumber] = [];
+      }
+      acc[order.tableNumber].push(order);
+      return acc;
+    }, {});
   };
 
   return (
@@ -128,10 +145,10 @@ const Dashboard = () => {
               <Loading />
             ) : (
               <>
-                <div className="text-2xl font-bold">{activeOrders}</div>
+                <div className="text-2xl font-bold">{activeOrders.length}</div>
                 <p className="text-xs text-muted-foreground">
-                  {((activeOrders / totalOrders) * 100).toFixed(1)}% of total
-                  orders
+                  {((activeOrders.length / totalOrders) * 100).toFixed(1)}% of
+                  total orders
                 </p>
               </>
             )}
@@ -215,23 +232,36 @@ const Dashboard = () => {
             </div>
           ) : (
             <>
-              {orders.filter((order) =>
-                ['pending', 'preparing'].includes(order.status)
-              ).length === 0 ? (
+              {activeOrders.length === 0 ? (
                 <EmptyState
                   icon={PackageOpen}
                   title="No Active Orders"
                   description="New orders will appear here when customers place them"
                 />
               ) : (
-                <OrdersList
-                  orders={orders.filter((order) =>
-                    ['pending', 'preparing'].includes(order.status)
+                <div className="space-y-8">
+                  {Object.entries(groupOrdersByTable(activeOrders)).map(
+                    ([tableNumber, tableOrders]) => (
+                      <Card key={tableNumber} className="p-4">
+                        <div className="flex items-center justify-between mb-4">
+                          <h3 className="text-lg font-semibold">
+                            Table {tableNumber}
+                          </h3>
+                          <Badge>
+                            {tableOrders.length}{" "}
+                            {tableOrders.length === 1 ? "Order" : "Orders"}
+                          </Badge>
+                        </div>
+                        <OrdersList
+                          orders={tableOrders}
+                          onStatusUpdate={handleStatusUpdate}
+                          onPayment={handlePayment}
+                          className="mt-4"
+                        />
+                      </Card>
+                    )
                   )}
-                  onStatusUpdate={handleStatusUpdate}
-                  onPayment={handlePayment}
-                  className="mt-4"
-                />
+                </div>
               )}
             </>
           )}
@@ -245,7 +275,7 @@ const Dashboard = () => {
           ) : (
             <>
               {orders.filter(
-                (order) => order.status === 'completed' && !order.isPaid
+                (order) => order.status === "completed" && !order.isPaid
               ).length === 0 ? (
                 <EmptyState
                   icon={CreditCard}
@@ -255,7 +285,7 @@ const Dashboard = () => {
               ) : (
                 <OrdersList
                   orders={orders.filter(
-                    (order) => order.status === 'completed' && !order.isPaid
+                    (order) => order.status === "completed" && !order.isPaid
                   )}
                   onStatusUpdate={handleStatusUpdate}
                   onPayment={handlePayment}
