@@ -119,13 +119,17 @@ const Dashboard = () => {
   };
 
   const groupOrdersByTable = (orders) => {
-    return orders.reduce((acc, order) => {
-      if (!acc[order.tableNumber]) {
-        acc[order.tableNumber] = [];
+    const tables = { 1: [], 2: [], 3: [], 4: [] };
+    orders.forEach((order) => {
+      if (tables[order.tableNumber]) {
+        tables[order.tableNumber].push(order);
       }
-      acc[order.tableNumber].push(order);
-      return acc;
-    }, {});
+    });
+    return tables;
+  };
+
+  const tableStatus = (tableOrders) => {
+    return tableOrders.length > 0 ? "Occupied" : "Unoccupied";
   };
 
   return (
@@ -239,25 +243,27 @@ const Dashboard = () => {
                   description="New orders will appear here when customers place them"
                 />
               ) : (
-                <div className="space-y-8">
+                <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
                   {Object.entries(groupOrdersByTable(activeOrders)).map(
                     ([tableNumber, tableOrders]) => (
-                      <Card key={tableNumber} className="p-4">
+                      <Card key={tableNumber} className="p-4 h-full">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="text-lg font-semibold">
-                            Table {tableNumber}
+                            Table {tableNumber} - {tableStatus(tableOrders)}
                           </h3>
                           <Badge>
                             {tableOrders.length}{" "}
                             {tableOrders.length === 1 ? "Order" : "Orders"}
                           </Badge>
                         </div>
-                        <OrdersList
-                          orders={tableOrders}
-                          onStatusUpdate={handleStatusUpdate}
-                          onPayment={handlePayment}
-                          className="mt-4"
-                        />
+                        <div className="overflow-y-auto max-h-96">
+                          <OrdersList
+                            orders={tableOrders}
+                            onStatusUpdate={handleStatusUpdate}
+                            onPayment={handlePayment}
+                            className="mt-4"
+                          />
+                        </div>
                       </Card>
                     )
                   )}

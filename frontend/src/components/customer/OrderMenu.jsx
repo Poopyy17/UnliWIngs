@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -346,6 +346,20 @@ const OrderMenu = () => {
     return acc;
   }, {});
 
+  useEffect(() => {
+    // Load existing order items from location state if available
+    if (location.state?.currentItems) {
+      setOrderItems(location.state.currentItems);
+      const unliwingsItem = location.state.currentItems.find(
+        (item) => item.isUnliwings
+      );
+      if (unliwingsItem) {
+        setSelectedFlavors(unliwingsItem.selectedFlavors || []);
+        setUnliwingsHistory(unliwingsItem.flavorHistory || []);
+      }
+    }
+  }, [location.state]);
+
   const addToOrder = (newItem, selectedSize = null) => {
     if (newItem.category === "Refreshers" && !selectedSize) {
       toast({
@@ -366,8 +380,10 @@ const OrderMenu = () => {
       setOrderItems((prevItems) => {
         const existingUnliwings = prevItems.find((item) => item.isUnliwings);
         if (existingUnliwings) {
-          // Don't increase quantity for Unliwings reorders
-          return prevItems;
+          // Increase quantity for Unliwings
+          return prevItems.map((item) =>
+            item.isUnliwings ? { ...item, quantity: item.quantity + 1 } : item
+          );
         }
         return [...prevItems, { ...newItem, quantity: 1 }];
       });
@@ -807,20 +823,17 @@ const OrderMenu = () => {
           <div className="container mx-auto p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <div className="bg-primary/10 p-2 rounded-full">
-                  <ShoppingCart className="h-6 w-6 text-primary" />
-                </div>
+                <ShoppingCart className="h-6 w-6 text-muted-foreground" />
                 <div>
-                  <p className="font-semibold">
-                    {totalItems} {totalItems === 1 ? "item" : "items"}
-                  </p>
                   <p className="text-sm text-muted-foreground">
-                    Total: ₱{totalAmount.toFixed(2)}
+                    {totalItems} item{totalItems > 1 ? "s" : ""}
                   </p>
+                  <p className="text-lg font-bold">₱{totalAmount.toFixed(2)}</p>
                 </div>
               </div>
-              <Button size="lg" onClick={submitOrder}>
-                Review Order
+              <Button onClick={submitOrder} className="flex items-center gap-2">
+                <ShoppingCart className="h-4 w-4" />
+                Submit Order
               </Button>
             </div>
           </div>

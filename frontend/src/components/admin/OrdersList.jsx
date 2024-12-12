@@ -12,12 +12,18 @@ const OrderStatus = {
   PREPARING: "preparing",
   COMPLETED: "completed",
   PAID: "paid",
+  ACCEPTED: "accepted",
 };
 
 const StatusFlow = {
   [OrderStatus.PENDING]: {
-    next: OrderStatus.PREPARING,
+    next: OrderStatus.ACCEPTED,
     buttonText: "Accept Order",
+    buttonColor: "default",
+  },
+  [OrderStatus.ACCEPTED]: {
+    next: OrderStatus.PREPARING,
+    buttonText: "Mark as Preparing",
     buttonColor: "default",
   },
   [OrderStatus.PREPARING]: {
@@ -54,6 +60,7 @@ const OrdersList = ({ orders, onStatusUpdate, onPayment, className }) => {
       [OrderStatus.PREPARING]: "bg-blue-500",
       [OrderStatus.COMPLETED]: "bg-green-500",
       [OrderStatus.PAID]: "bg-green-700",
+      [OrderStatus.ACCEPTED]: "bg-purple-500",
     };
     return colors[status] || "bg-gray-500";
   };
