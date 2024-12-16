@@ -94,7 +94,13 @@ const BillOut = () => {
   }, [orderId]);
 
   const handleOrderAgain = () => {
-    navigate("/order", { state: { tableNumber, orderId } });
+    navigate("/order", {
+      state: {
+        tableNumber,
+        orderId,
+        currentItems: currentItems.filter((item) => !isUnliwingsItem(item)),
+      },
+    });
   };
 
   const handlePayBill = async () => {
@@ -127,6 +133,16 @@ const BillOut = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const calculateTotal = () => {
+    return currentItems.reduce((total, item) => {
+      if (item.isUnliwings) {
+        // Use originalQuantity for Unliwings pricing (initial order only)
+        return total + item.price * (item.originalQuantity || item.quantity);
+      }
+      return total + item.price * item.quantity;
+    }, 0);
   };
 
   return (
@@ -190,15 +206,24 @@ const BillOut = () => {
                         {item.isUnliwings && (
                           <div className="text-xs text-muted-foreground mt-1">
                             <div>
+                              <span className="font-medium">
+                                ({item.originalQuantity || item.quantity}{" "}
+                                {(item.originalQuantity || item.quantity) > 1
+                                  ? "persons"
+                                  : "person"}
+                                )
+                              </span>
+                            </div>
+                            <div>
                               Current Flavors:{" "}
                               {item.selectedFlavors?.join(", ")}
                             </div>
                             {item.flavorHistory?.length > 0 && (
                               <div>
-                                Previous Orders ({item.flavorHistory.length}):
+                                Previous Orders:
                                 {item.flavorHistory.map((flavors, i) => (
                                   <div key={i} className="ml-2">
-                                    • {flavors.join(", ")}
+                                    #{i + 1}: {flavors.join(", ")}
                                   </div>
                                 ))}
                               </div>
@@ -206,14 +231,18 @@ const BillOut = () => {
                           </div>
                         )}
                       </div>
-                      <span className="text-right">{item.quantity}</span>
                       <span className="text-right">
-                        ${(item.price * item.quantity).toFixed(2)}
-                        {item.isUnliwings && item.flavorHistory?.length > 0 && (
-                          <div className="text-xs text-muted-foreground">
-                            (Unlimited)
-                          </div>
-                        )}
+                        {item.isUnliwings
+                          ? item.originalQuantity || item.quantity
+                          : item.quantity}
+                      </span>
+                      <span className="text-right">
+                        ₱
+                        {(item.isUnliwings
+                          ? item.price *
+                            (item.originalQuantity || item.quantity)
+                          : item.price * item.quantity
+                        ).toFixed(2)}
                       </span>
                     </div>
                   </motion.div>
@@ -225,7 +254,7 @@ const BillOut = () => {
               <div className="flex justify-between items-center">
                 <span className="font-semibold">Total</span>
                 <span className="text-2xl font-bold">
-                  ${currentTotal?.toFixed(2)}
+                  ₱{calculateTotal().toFixed(2)}
                 </span>
               </div>
 

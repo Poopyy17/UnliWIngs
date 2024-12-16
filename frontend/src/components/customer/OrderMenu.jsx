@@ -17,8 +17,9 @@ const MOCK_MENU = [
     name: "Unliwings",
     price: 279,
     category: "Unliwings",
-    description: "Unlimited wings with choice of flavors",
+    description: "Unlimited wings with choice of flavors (Price per person)",
     isUnliwings: true,
+    allowQuantity: true,
   },
   // Ala Carte
   {
@@ -361,6 +362,34 @@ const OrderMenu = () => {
   }, [location.state]);
 
   const addToOrder = (newItem, selectedSize = null) => {
+    if (newItem.isUnliwings) {
+      setOrderItems((prevItems) => {
+        const existingUnliwings = prevItems.find((item) => item.isUnliwings);
+        if (existingUnliwings) {
+          if (existingUnliwings.flavorHistory?.length > 0) {
+            // This is a reorder - keep quantity, update selectedFlavors
+            return prevItems;
+          } else {
+            // This is still initial order - allow quantity increase
+            return prevItems.map((item) =>
+              item.isUnliwings ? { ...item, quantity: item.quantity + 1 } : item
+            );
+          }
+        }
+        return [
+          ...prevItems,
+          {
+            ...newItem,
+            quantity: 1,
+            selectedFlavors: [],
+            flavorHistory: [],
+            initialOrder: true, // Flag to track initial order
+          },
+        ];
+      });
+      return;
+    }
+
     if (newItem.category === "Refreshers" && !selectedSize) {
       toast({
         title: "Select size",
@@ -374,21 +403,6 @@ const OrderMenu = () => {
       newItem.category === "Refreshers"
         ? `${newItem.id}_${selectedSize.size}`
         : newItem.id;
-
-    // Special handling for Unliwings
-    if (newItem.isUnliwings) {
-      setOrderItems((prevItems) => {
-        const existingUnliwings = prevItems.find((item) => item.isUnliwings);
-        if (existingUnliwings) {
-          // Increase quantity for Unliwings
-          return prevItems.map((item) =>
-            item.isUnliwings ? { ...item, quantity: item.quantity + 1 } : item
-          );
-        }
-        return [...prevItems, { ...newItem, quantity: 1 }];
-      });
-      return;
-    }
 
     // Normal handling for other items
     const itemToAdd =
@@ -436,11 +450,6 @@ const OrderMenu = () => {
       }
       return [...prev, flavor];
     });
-
-    // Track flavor history for Unliwings
-    if (orderItems.find((item) => item.isUnliwings)) {
-      setUnliwingsHistory((prev) => [...prev, selectedFlavors]);
-    }
   };
 
   const toggleItemFlavor = (itemId, flavor) => {
@@ -494,9 +503,10 @@ const OrderMenu = () => {
           return {
             ...item,
             selectedFlavors,
-            flavorHistory: unliwingsHistory,
-            // Keep original price but track as reorder if needed
-            isReorder: unliwingsHistory.length > 0,
+            flavorHistory: item.flavorHistory
+              ? [...item.flavorHistory, selectedFlavors]
+              : [selectedFlavors],
+            isReorder: item.flavorHistory?.length > 0,
           };
         }
         return {
@@ -585,34 +595,59 @@ const OrderMenu = () => {
             {categories.map((category) => (
               <TabsContent key={category} value={category}>
                 {/* Unliwings flavor selection */}
-                {category === "Unliwings" &&
-                  getItemQuantity("unliwings") > 0 && (
-                    <div className="mb-8">
-                      <div className="flex justify-between items-center mb-4">
-                        <h2 className="text-xl font-semibold">
-                          Select Wing Flavors ({getItemQuantity("unliwings")}{" "}
-                          person
-                          {getItemQuantity("unliwings") > 1 ? "s" : ""})
-                        </h2>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                        {WING_FLAVORS.map((flavor) => (
-                          <Button
-                            key={flavor}
-                            variant={
-                              selectedFlavors.includes(flavor)
-                                ? "default"
-                                : "outline"
-                            }
-                            onClick={() => toggleFlavor(flavor)}
-                            className="w-full"
-                          >
-                            {flavor}
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                {category === "Unliwings" && (
+                  <div className="mb-8">
+                    {getItemQuantity("unliwings") > 0 && (
+                      <>
+                        <div className="flex justify-between items-center mb-4">
+                          <h2 className="text-xl font-semibold">
+                            Select Wing Flavors
+                            {getItemQuantity("unliwings") > 0 &&
+                              ` (${getItemQuantity("unliwings")} person${
+                                getItemQuantity("unliwings") > 1 ? "s" : ""
+                              })`}
+                          </h2>
+                          {unliwingsHistory.length > 0 && (
+                            <Badge variant="outline">
+                              Reorder #{unliwingsHistory.length + 1}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                          {WING_FLAVORS.map((flavor) => (
+                            <Button
+                              key={flavor}
+                              variant={
+                                selectedFlavors.includes(flavor)
+                                  ? "default"
+                                  : "outline"
+                              }
+                              onClick={() => toggleFlavor(flavor)}
+                              className="w-full"
+                            >
+                              {flavor}
+                            </Button>
+                          ))}
+                        </div>
+                        {unliwingsHistory.length > 0 && (
+                          <div className="mt-4">
+                            <h3 className="text-sm font-medium mb-2">
+                              Previous Orders:
+                            </h3>
+                            {unliwingsHistory.map((flavors, index) => (
+                              <div
+                                key={index}
+                                className="text-sm text-muted-foreground"
+                              >
+                                Order #{index + 1}: {flavors.join(", ")}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {/* Refresher size selection */}
                 {category === "Refreshers" && selectedRefresher && (
@@ -779,9 +814,6 @@ const OrderMenu = () => {
                                       >
                                         <MinusCircle className="h-4 w-4" />
                                       </Button>
-                                      <span className="font-medium w-8 text-center">
-                                        {quantity}
-                                      </span>
                                       <Button
                                         variant="outline"
                                         size="icon"
@@ -789,6 +821,9 @@ const OrderMenu = () => {
                                       >
                                         <PlusCircle className="h-4 w-4" />
                                       </Button>
+                                      <span className="font-medium w-8 text-center">
+                                        {quantity}
+                                      </span>
                                     </div>
                                   ) : (
                                     <Button
@@ -812,33 +847,25 @@ const OrderMenu = () => {
             ))}
           </Tabs>
         </ScrollArea>
-      </div>
 
-      {orderItems.length > 0 && (
-        <motion.div
-          initial={{ y: 100 }}
-          animate={{ y: 0 }}
-          className="fixed bottom-0 left-0 right-0 bg-white border-t shadow-lg"
-        >
-          <div className="container mx-auto p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <ShoppingCart className="h-6 w-6 text-muted-foreground" />
-                <div>
-                  <p className="text-sm text-muted-foreground">
-                    {totalItems} item{totalItems > 1 ? "s" : ""}
-                  </p>
-                  <p className="text-lg font-bold">₱{totalAmount.toFixed(2)}</p>
-                </div>
+        <div className="fixed bottom-5 left-1/2 transform -translate-x-1/2 w-11/12 max-w-4xl bg-white shadow-lg p-4 rounded-md">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <ShoppingCart className="h-6 w-6 text-muted-foreground" />
+              <div>
+                <p className="text-sm text-muted-foreground">
+                  {totalItems} item{totalItems > 1 ? "s" : ""}
+                </p>
+                <p className="text-lg font-bold">₱{totalAmount.toFixed(2)}</p>
               </div>
-              <Button onClick={submitOrder} className="flex items-center gap-2">
-                <ShoppingCart className="h-4 w-4" />
-                Submit Order
-              </Button>
             </div>
+            <Button onClick={submitOrder} className="flex items-center gap-2">
+              <ShoppingCart className="h-4 w-4" />
+              Submit Order
+            </Button>
           </div>
-        </motion.div>
-      )}
+        </div>
+      </div>
     </div>
   );
 };

@@ -42,22 +42,30 @@ const OrderSummary = () => {
           const existingUnliwings = mergedItems.find(isUnliwingsItem);
 
           if (newUnliwings && existingUnliwings) {
-            // Update existing Unliwings with new flavors but keep quantity
-            existingUnliwings.selectedFlavors = newUnliwings.selectedFlavors;
-            existingUnliwings.flavorHistory = [
-              ...(existingUnliwings.flavorHistory || []),
-              newUnliwings.selectedFlavors,
-            ];
+            // Update existing Unliwings with new flavors but keep original quantity
+            mergedItems = mergedItems.map((item) => {
+              if (item.isUnliwings) {
+                return {
+                  ...item,
+                  selectedFlavors: newUnliwings.selectedFlavors,
+                  flavorHistory: [
+                    ...(item.flavorHistory || []),
+                    newUnliwings.selectedFlavors,
+                  ],
+                  // Keep original quantity for pricing
+                  originalQuantity: item.originalQuantity || item.quantity,
+                };
+              }
+              return item;
+            });
 
-            // Filter out new Unliwings since we've merged it
+            // Handle non-Unliwings items
             const nonUnliwingsItems = newItems.filter(
               (item) => !isUnliwingsItem(item)
             );
-
-            // Merge other items normally
             nonUnliwingsItems.forEach((newItem) => {
               const existingItem = mergedItems.find(
-                (item) => item.name === newItem.name && !isUnliwingsItem(item)
+                (item) => item.id === newItem.id && !isUnliwingsItem(item)
               );
               if (existingItem) {
                 existingItem.quantity += newItem.quantity;
@@ -66,15 +74,21 @@ const OrderSummary = () => {
               }
             });
           } else {
-            // No existing Unliwings, merge all items normally
             newItems.forEach((newItem) => {
-              const existingItem = mergedItems.find(
-                (item) => item.name === newItem.name
-              );
-              if (existingItem) {
-                existingItem.quantity += newItem.quantity;
+              if (isUnliwingsItem(newItem)) {
+                mergedItems.push({
+                  ...newItem,
+                  originalQuantity: newItem.quantity, // Store original quantity
+                });
               } else {
-                mergedItems.push(newItem);
+                const existingItem = mergedItems.find(
+                  (item) => item.id === newItem.id
+                );
+                if (existingItem) {
+                  existingItem.quantity += newItem.quantity;
+                } else {
+                  mergedItems.push(newItem);
+                }
               }
             });
           }
@@ -108,11 +122,15 @@ const OrderSummary = () => {
 
   const accumulatedOrders =
     orderDetails?.items || state.orders[tableNumber] || [];
+
   const calculateTotal = () => {
-    return accumulatedOrders.reduce(
-      (total, item) => total + item.price * item.quantity,
-      0
-    );
+    return accumulatedOrders.reduce((total, item) => {
+      if (item.isUnliwings) {
+        // Use originalQuantity for Unliwings pricing
+        return total + item.price * (item.originalQuantity || item.quantity);
+      }
+      return total + item.price * item.quantity;
+    }, 0);
   };
 
   const confirmOrder = () => {
@@ -189,28 +207,62 @@ const OrderSummary = () => {
                     >
                       <div className="flex justify-between items-start">
                         <div className="space-y-1">
-                          <h3 className="font-medium">{item.name}</h3>
+                          <h3 className="font-medium">
+                            {item.name}
+                            {item.isUnliwings && (
+                              <span className="text-sm text-muted-foreground ml-2">
+                                ({item.originalQuantity || item.quantity}{" "}
+                                {(item.originalQuantity || item.quantity) > 1
+                                  ? "persons"
+                                  : "person"}
+                                )
+                              </span>
+                            )}
+                          </h3>
                           <div className="flex items-center text-sm text-muted-foreground">
                             <span>
-                              ₱{item.price.toFixed(2)} × {item.quantity}
+                              ₱{item.price.toFixed(2)} ×{" "}
+                              {item.isUnliwings
+                                ? item.originalQuantity || item.quantity
+                                : item.quantity}
                             </span>
                           </div>
-                          {item.isUnliwings &&
-                            item.selectedFlavors?.length > 0 && (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                Current Flavors:{" "}
-                                {item.selectedFlavors.join(", ")}
-                              </div>
-                            )}
-                          {item.isUnliwings &&
-                            item.flavorHistory?.length > 0 && (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                Previous Orders: {item.flavorHistory.length}
-                              </div>
-                            )}
+                          {item.isUnliwings && (
+                            <>
+                              {item.selectedFlavors?.length > 0 && (
+                                <div className="text-sm text-muted-foreground mt-2">
+                                  <span className="font-medium">
+                                    Current Order:
+                                  </span>{" "}
+                                  {item.selectedFlavors.join(", ")}
+                                </div>
+                              )}
+                              {item.flavorHistory?.length > 0 && (
+                                <div className="text-sm space-y-1 mt-2">
+                                  <span className="font-medium text-muted-foreground">
+                                    Previous Orders:
+                                  </span>
+                                  {item.flavorHistory.map((flavors, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="text-xs text-muted-foreground pl-2"
+                                    >
+                                      #{idx + 1}: {flavors.join(", ")}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
                         <p className="font-medium">
-                          ₱{(item.price * item.quantity).toFixed(2)}
+                          ₱
+                          {(
+                            item.price *
+                            (item.isUnliwings
+                              ? item.originalQuantity || item.quantity
+                              : item.quantity)
+                          ).toFixed(2)}
                         </p>
                       </div>
                       {index < accumulatedOrders.length - 1 && (

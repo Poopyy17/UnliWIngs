@@ -10,6 +10,15 @@ const generateReceiptNumber = () => {
   return `R${timestamp.slice(-6)}${random}`;
 };
 
+const calculateTotal = (items) => {
+  return items.reduce((sum, item) => {
+    if (item.isUnliwings) {
+      return sum + item.price * (item.originalQuantity || item.quantity);
+    }
+    return sum + item.price * item.quantity;
+  }, 0);
+};
+
 const VALID_STATUSES = ["pending", "preparing", "completed", "paid"];
 const isUnliwingsItem = (item) => item.isUnliwings === true;
 
@@ -67,10 +76,7 @@ router.post("/", async (req, res) => {
 
       // Combine items and calculate total
       const updatedItems = [...updatedRegularItems, ...updatedUnliwingsItems];
-      const total = updatedItems.reduce(
-        (sum, item) => sum + item.price * item.quantity,
-        0
-      );
+      const total = calculateTotal(updatedItems);
 
       order = await Order.findByIdAndUpdate(
         orderId,
@@ -82,10 +88,7 @@ router.post("/", async (req, res) => {
       );
     } else {
       // Create new order - no changes needed for initial order
-      const total = items.reduce(
-        (sum, item) => sum + item.price * item.quantity,
-        0
-      );
+      const total = calculateTotal(items);
 
       order = new Order({
         tableNumber,
@@ -164,7 +167,6 @@ router.patch("/:id", async (req, res) => {
 
     let updatedItems;
     if (action === "add") {
-      // Separate Unliwings and regular items
       const newUnliwingsItems = items.filter(isUnliwingsItem);
       const newRegularItems = items.filter((item) => !isUnliwingsItem(item));
 
@@ -183,7 +185,7 @@ router.patch("/:id", async (req, res) => {
         }
       });
 
-      // Handle Unliwings items
+      // Handle Unliwings
       const existingUnliwings = order.items.find(isUnliwingsItem);
       let updatedUnliwingsItems = [];
 
@@ -192,24 +194,28 @@ router.patch("/:id", async (req, res) => {
           {
             ...existingUnliwings,
             selectedFlavors: newUnliwingsItems[0].selectedFlavors,
+            flavorHistory: [
+              ...(existingUnliwings.flavorHistory || []),
+              newUnliwingsItems[0].selectedFlavors,
+            ],
+            originalQuantity:
+              existingUnliwings.originalQuantity || existingUnliwings.quantity,
           },
         ];
       } else if (newUnliwingsItems.length > 0) {
-        updatedUnliwingsItems = newUnliwingsItems;
-      } else if (existingUnliwings) {
-        updatedUnliwingsItems = [existingUnliwings];
+        updatedUnliwingsItems = newUnliwingsItems.map((item) => ({
+          ...item,
+          originalQuantity: item.quantity,
+          flavorHistory: [item.selectedFlavors],
+        }));
       }
 
       updatedItems = [...updatedRegularItems, ...updatedUnliwingsItems];
     } else {
-      // Replace items
       updatedItems = items;
     }
 
-    const total = updatedItems.reduce(
-      (sum, item) => sum + item.price * item.quantity,
-      0
-    );
+    const total = calculateTotal(updatedItems);
 
     const updatedOrder = await Order.findByIdAndUpdate(
       orderId,

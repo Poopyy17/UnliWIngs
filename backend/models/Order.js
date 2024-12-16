@@ -1,4 +1,4 @@
-import { Schema, model } from 'mongoose';
+import { Schema, model } from "mongoose";
 
 const orderSchema = new Schema(
   {
@@ -20,6 +20,18 @@ const orderSchema = new Schema(
           type: Number,
           required: true,
         },
+        // Add new fields
+        isUnliwings: {
+          type: Boolean,
+          default: false,
+        },
+        originalQuantity: {
+          type: Number,
+        },
+        selectedFlavors: [String],
+        flavorHistory: [[String]], // Array of flavor arrays
+        category: String,
+        description: String,
       },
     ],
     total: {
@@ -28,12 +40,12 @@ const orderSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'preparing', 'completed', 'paid'],
-      default: 'pending',
+      enum: ["pending", "preparing", "completed", "paid"],
+      default: "pending",
     },
     receiptNumber: {
       type: String,
-      sparse: true, // Only index non-null values
+      sparse: true,
     },
     isPaid: {
       type: Boolean,
@@ -46,4 +58,4 @@ const orderSchema = new Schema(
 // Create sparse index for receiptNumber
 orderSchema.index({ receiptNumber: 1 }, { sparse: true });
 
-export default model('Order', orderSchema);
+export default model("Order", orderSchema);
