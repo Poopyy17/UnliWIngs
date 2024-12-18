@@ -75,15 +75,12 @@ router.post('/receipt', async (req, res) => {
     const { tableNumber } = req.body;
     const receiptNumber = generateReceiptNumber();
 
-    console.log('Generating receipt for table:', tableNumber);
-
-    // Find all active orders for the table
+    // Find all unpaid orders for the table
     const tableOrders = await Order.find({
       tableNumber: tableNumber.toString(),
-      status: { $nin: ['completed', 'paid'] },
+      status: { $nin: ['paid'] },
+      isPaid: { $ne: true },
     });
-
-    console.log('Found table orders:', tableOrders);
 
     if (!tableOrders.length) {
       return res
@@ -104,11 +101,11 @@ router.post('/receipt', async (req, res) => {
       )
     );
 
-    await Promise.all(updatePromises);
-
+    const updatedOrders = await Promise.all(updatePromises);
     res.json({
       receiptNumber,
-      ordersCompleted: tableOrders.length,
+      ordersCompleted: updatedOrders.length,
+      orders: updatedOrders,
     });
   } catch (error) {
     console.error('Receipt generation error:', error);
@@ -380,6 +377,62 @@ router.patch('/:id/pay', async (req, res) => {
     res.json(order);
   } catch (error) {
     res.status(400).json({ message: error.message });
+  }
+});
+
+router.patch('/table/:tableNumber/pay', async (req, res) => {
+  try {
+    const { tableNumber } = req.params;
+
+    // Find all completed and unpaid orders for the table
+    const orders = await Order.find({
+      tableNumber: tableNumber.toString(),
+      status: 'completed',
+      isPaid: { $ne: true },
+    });
+
+    if (!orders.length) {
+      return res.status(404).json({
+        message: 'No unpaid orders found for table',
+        tableNumber,
+      });
+    }
+
+    // Update all orders to paid status
+    const updatePromises = orders.map((order) =>
+      Order.findByIdAndUpdate(
+        order._id,
+        {
+          status: 'paid',
+          isPaid: true,
+          paidAt: new Date(),
+          total: order.total, // Ensure total is saved
+        },
+        { new: true }
+      )
+    );
+
+    const updatedOrders = await Promise.all(updatePromises);
+
+    // Calculate total amount paid
+    const totalPaid = updatedOrders.reduce(
+      (sum, order) => sum + order.total,
+      0
+    );
+
+    res.json({
+      success: true,
+      tableNumber,
+      ordersProcessed: updatedOrders.length,
+      totalPaid,
+      orders: updatedOrders,
+    });
+  } catch (error) {
+    console.error('Table payment error:', error);
+    res.status(400).json({
+      message: error.message,
+      tableNumber: req.params.tableNumber,
+    });
   }
 });
 

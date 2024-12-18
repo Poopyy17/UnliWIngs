@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { getOrders, updateOrderStatus, markOrderAsPaid } from '@/services/api';
+import {
+  getOrders,
+  updateOrderStatus,
+  processTablePayment,
+} from '@/services/api';
 import { Loading } from '@/components/ui/loading';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -38,12 +42,21 @@ const Dashboard = () => {
   const calculateTableTotal = (orders) => {
     return orders.reduce((sum, order) => {
       const orderTotal = order.items.reduce((itemSum, item) => {
+        // Skip items from different orders
+        if (
+          !item.isUnliwings &&
+          item.originalOrderId &&
+          item.originalOrderId !== order._id
+        ) {
+          return itemSum;
+        }
+
         if (item.isUnliwings) {
-          // Match BillOut logic - only charge initial orders
           return item.flavorHistory?.length > 0
-            ? itemSum // Skip re-order charges
+            ? itemSum
             : itemSum + item.price * (item.originalQuantity || item.quantity);
         }
+
         return itemSum + item.price * item.quantity;
       }, 0);
       return sum + orderTotal;
@@ -91,9 +104,9 @@ const Dashboard = () => {
   const calculateTotal = (items) => {
     return items.reduce((sum, item) => {
       if (item.isUnliwings) {
-        return item.flavorHistory?.length > 0
-          ? sum // Skip re-order charges
-          : sum + item.price * (item.originalQuantity || item.quantity);
+        // Only charge for initial order based on original quantity
+        const isReorder = item.flavorHistory?.length > 0;
+        return isReorder ? sum : sum + item.price * item.originalQuantity;
       }
       return sum + item.price * item.quantity;
     }, 0);
@@ -131,10 +144,26 @@ const Dashboard = () => {
     }
   };
 
+  const groupOrdersById = (items) => {
+    return items.reduce((acc, item) => {
+      const orderId = item.orderId;
+      if (!acc[orderId]) {
+        acc[orderId] = [];
+      }
+      acc[orderId].push(item);
+      return acc;
+    }, {});
+  };
+
   const groupOrdersForPayment = (orders) => {
-    if (!Array.isArray(orders)) return [];
+    if (!Array.isArray(orders)) {
+      console.log('Orders is not an array:', orders);
+      return [];
+    }
 
     const groupedByTable = orders.reduce((acc, order) => {
+      if (!order?.tableNumber) return acc;
+
       const key = order.tableNumber.toString();
       if (!acc[key]) {
         acc[key] = {
@@ -145,27 +174,25 @@ const Dashboard = () => {
         };
       }
       acc[key].orders.push(order);
-      acc[key].total += calculateTotal(order.items);
+      acc[key].total += calculateTotal(order.items || []);
       return acc;
     }, {});
 
     return Object.values(groupedByTable);
   };
 
-  const handlePayment = async (orderId) => {
+  const handleTablePayment = async (tableNumber) => {
     try {
-      const updatedOrder = await markOrderAsPaid(orderId);
-      setOrders(
-        orders.map((order) => (order._id === orderId ? updatedOrder : order))
-      );
+      await processTablePayment(tableNumber);
+      await fetchOrders(); // Refresh orders
       toast({
         title: 'Payment Processed',
-        description: 'Order has been marked as paid',
+        description: `All orders for Table ${tableNumber} have been paid`,
       });
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to process payment',
+        description: 'Failed to process table payment',
         variant: 'destructive',
       });
     }
@@ -410,87 +437,94 @@ const Dashboard = () => {
                               </AccordionTrigger>
                               <AccordionContent>
                                 <div className="space-y-4 p-2">
-                                  {order.items.map((item, idx) => (
-                                    <div
-                                      key={idx}
-                                      className={cn(
-                                        'p-3 rounded-lg',
-                                        item.isUnliwings &&
-                                          'border border-blue-200 bg-blue-50'
-                                      )}
-                                    >
-                                      <div className="flex justify-between items-start">
-                                        <div>
-                                          <p className="font-medium">
-                                            {item.name}
-                                          </p>
-                                          {item.isUnliwings && (
-                                            <div className="text-sm text-muted-foreground mt-1">
-                                              <p>
-                                                Current Flavors:{' '}
-                                                {item.selectedFlavors?.join(
-                                                  ', '
-                                                )}
-                                              </p>
-                                              {item.flavorHistory?.length >
-                                                0 && (
-                                                <div className="mt-1">
-                                                  <p>Previous Orders:</p>
-                                                  {item.flavorHistory.map(
-                                                    (flavors, i) => (
-                                                      <p
-                                                        key={i}
-                                                        className="ml-2"
-                                                      >
-                                                        #{i + 1}:{' '}
-                                                        {flavors.join(', ')}
-                                                      </p>
-                                                    )
+                                  {order.items
+                                    .filter(
+                                      (item) =>
+                                        !item.originalOrderId ||
+                                        item.originalOrderId === order._id ||
+                                        item.isUnliwings
+                                    )
+                                    .map((item, idx) => (
+                                      <div
+                                        key={idx}
+                                        className={cn(
+                                          'p-3 rounded-lg',
+                                          item.isUnliwings &&
+                                            'border border-blue-200 bg-blue-50'
+                                        )}
+                                      >
+                                        <div className="flex justify-between items-start">
+                                          <div>
+                                            <p className="font-medium">
+                                              {item.name}
+                                            </p>
+                                            {item.isUnliwings && (
+                                              <div className="text-sm text-muted-foreground mt-1">
+                                                <p>
+                                                  Current Flavors:{' '}
+                                                  {item.selectedFlavors?.join(
+                                                    ', '
                                                   )}
-                                                </div>
-                                              )}
-                                              <p className="mt-1">
-                                                Quantity:{' '}
-                                                {item.originalQuantity ||
-                                                  item.quantity}
-                                              </p>
+                                                </p>
+                                                {item.flavorHistory?.length >
+                                                  0 && (
+                                                  <div className="mt-1">
+                                                    <p>Previous Orders:</p>
+                                                    {item.flavorHistory.map(
+                                                      (flavors, i) => (
+                                                        <p
+                                                          key={i}
+                                                          className="ml-2"
+                                                        >
+                                                          #{i + 1}:{' '}
+                                                          {flavors.join(', ')}
+                                                        </p>
+                                                      )
+                                                    )}
+                                                  </div>
+                                                )}
+                                                <p className="mt-1">
+                                                  Quantity:{' '}
+                                                  {item.originalQuantity ||
+                                                    item.quantity}
+                                                </p>
+                                              </div>
+                                            )}
+                                          </div>
+                                          <p className="font-medium">
+                                            ₱
+                                            {item.isUnliwings &&
+                                            item.flavorHistory?.length > 0
+                                              ? '0.00' // Show zero for re-orders
+                                              : (
+                                                  item.price *
+                                                  (item.originalQuantity ||
+                                                    item.quantity)
+                                                ).toFixed(2)}
+                                          </p>
+                                        </div>
+
+                                        {/* Accept Flavor Button */}
+                                        {item.isUnliwings &&
+                                          item.flavorOrderStatus ===
+                                            'flavor_pending' && (
+                                            <div className="mt-2">
+                                              <Button
+                                                size="sm"
+                                                onClick={() =>
+                                                  handleStatusUpdate(
+                                                    order._id,
+                                                    'accepted'
+                                                  )
+                                                }
+                                                variant="outline"
+                                              >
+                                                Accept New Flavors
+                                              </Button>
                                             </div>
                                           )}
-                                        </div>
-                                        <p className="font-medium">
-                                          ₱
-                                          {item.isUnliwings &&
-                                          item.flavorHistory?.length > 0
-                                            ? '0.00' // Show zero for re-orders
-                                            : (
-                                                item.price *
-                                                (item.originalQuantity ||
-                                                  item.quantity)
-                                              ).toFixed(2)}
-                                        </p>
                                       </div>
-
-                                      {/* Accept Flavor Button */}
-                                      {item.isUnliwings &&
-                                        item.flavorOrderStatus ===
-                                          'flavor_pending' && (
-                                          <div className="mt-2">
-                                            <Button
-                                              size="sm"
-                                              onClick={() =>
-                                                handleStatusUpdate(
-                                                  order._id,
-                                                  'accepted'
-                                                )
-                                              }
-                                              variant="outline"
-                                            >
-                                              Accept New Flavors
-                                            </Button>
-                                          </div>
-                                        )}
-                                    </div>
-                                  ))}
+                                    ))}
                                   {/* Individual Order Total */}
                                   <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="font-semibold">
@@ -503,15 +537,21 @@ const Dashboard = () => {
                                           if (item.isUnliwings) {
                                             return item.flavorHistory?.length >
                                               0
-                                              ? sum // Skip re-order charges
+                                              ? sum
                                               : sum +
                                                   item.price *
                                                     (item.originalQuantity ||
                                                       item.quantity);
                                           }
-                                          return (
-                                            sum + item.price * item.quantity
-                                          );
+                                          if (
+                                            !item.originalOrderId ||
+                                            item.originalOrderId === order._id
+                                          ) {
+                                            return (
+                                              sum + item.price * item.quantity
+                                            );
+                                          }
+                                          return sum;
                                         }, 0)
                                         .toFixed(2)}
                                     </span>
@@ -551,7 +591,7 @@ const Dashboard = () => {
                     (order) => order.status === 'completed' && !order.isPaid
                   )}
                   onStatusUpdate={handleStatusUpdate}
-                  onPayment={handlePayment}
+                  onPayment={handleTablePayment}
                   className="mt-4"
                   isPaymentView={true}
                 />
@@ -567,7 +607,8 @@ const Dashboard = () => {
             </div>
           ) : (
             <>
-              {orders.filter((order) => order.isPaid).length === 0 ? (
+              {orders.filter((order) => order.status === 'paid').length ===
+              0 ? (
                 <EmptyState
                   icon={CheckCircle}
                   title="No Completed Orders"
@@ -575,10 +616,11 @@ const Dashboard = () => {
                 />
               ) : (
                 <OrdersList
-                  orders={orders.filter((order) => order.isPaid)}
+                  orders={orders.filter((order) => order.status === 'paid')}
                   onStatusUpdate={handleStatusUpdate}
-                  onPayment={handlePayment}
+                  onPayment={handleTablePayment}
                   className="mt-4"
+                  isPaymentView={false}
                 />
               )}
             </>

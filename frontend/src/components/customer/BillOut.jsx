@@ -43,18 +43,97 @@ const BillOut = () => {
     orderId,
   } = location.state || {};
 
-  const [receiptNumber, setReceiptNumber] = useState(null);
-  const [orderStatus, setOrderStatus] = useState(null);
-  const [currentItems, setCurrentItems] = useState(initialItems);
-  const [currentTotal, setCurrentTotal] = useState(initialTotal);
   const [isLoading, setIsLoading] = useState(false);
+  const [orderState, setOrderState] = useState({
+    items: initialItems ? [...initialItems] : [],
+    total: initialTotal || 0,
+    status: null,
+    receiptNumber: null,
+  });
 
   const isUnliwingsItem = (item) => item.isUnliwings === true;
 
   const showGenerateReceiptButton =
-    !receiptNumber && orderStatus !== OrderStatus.PAID;
+    !orderState.receiptNumber && orderState.status !== OrderStatus.PAID;
+
   const showProceedToCounter =
-    receiptNumber && orderStatus !== OrderStatus.PAID;
+    orderState.receiptNumber && orderState.status !== OrderStatus.PAID;
+
+  const groupOrdersByNumber = (items) => {
+    if (!items?.length) return [];
+
+    // Group items by their timestamp
+    const orderGroups = items.reduce((acc, item) => {
+      const timestamp = item.timestamp?.toString() || Date.now().toString();
+
+      if (!acc[timestamp]) {
+        acc[timestamp] = {
+          id: `order-${timestamp}`,
+          items: [],
+          orderNumber: Object.keys(acc).length + 1,
+          timestamp: new Date(Number(timestamp)),
+          total: 0,
+        };
+      }
+      acc[timestamp].items.push(item);
+      return acc;
+    }, {});
+
+    // Calculate total for each order group
+    Object.values(orderGroups).forEach((group) => {
+      group.total = group.items.reduce((sum, item) => {
+        if (item.isUnliwings) {
+          return item.flavorHistory?.length > 0
+            ? sum
+            : sum + item.price * (item.originalQuantity || item.quantity);
+        }
+        return sum + item.price * item.quantity;
+      }, 0);
+    });
+
+    return Object.values(orderGroups).sort((a, b) => a.timestamp - b.timestamp);
+  };
+
+  const groupOrders = (items) => {
+    if (!items) return {};
+
+    const grouped = items.reduce((acc, item) => {
+      if (item.isUnliwings) {
+        // Handle Unliwings items
+        if (!item.flavorHistory?.length) {
+          // Initial order
+          if (!acc.initial) acc.initial = [];
+          acc.initial.push({
+            ...item,
+            isInitial: true,
+          });
+        } else {
+          // Reorders
+          if (!acc.reorders) acc.reorders = [];
+          // Add current order
+          acc.reorders.push({
+            ...item,
+            selectedFlavors: item.selectedFlavors,
+          });
+          // Add flavor history
+          item.flavorHistory.forEach((flavors, index) => {
+            acc.reorders.push({
+              ...item,
+              selectedFlavors: flavors,
+              orderNumber: index + 1,
+            });
+          });
+        }
+      } else {
+        // Regular items
+        if (!acc.regular) acc.regular = [];
+        acc.regular.push(item);
+      }
+      return acc;
+    }, {});
+
+    return grouped;
+  };
 
   const formatDate = () => {
     return new Date().toLocaleDateString('en-US', {
@@ -72,12 +151,29 @@ const BillOut = () => {
     const fetchOrderStatus = async () => {
       try {
         const order = await getOrder(orderId);
-        setOrderStatus(order.status);
-        setCurrentItems(order.items);
-        setCurrentTotal(order.total);
-        if (order.receiptNumber) {
-          setReceiptNumber(order.receiptNumber);
-        }
+
+        setOrderState((prev) => {
+          // Check if we have new items to add
+          const hasNewItems = order.items.some(
+            (newItem) =>
+              !prev.items.some(
+                (existingItem) =>
+                  existingItem.orderId === newItem.orderId &&
+                  existingItem.timestamp === newItem.timestamp
+              )
+          );
+
+          if (hasNewItems || order.status !== prev.status) {
+            const mergedItems = mergeOrders(prev.items, order.items);
+            return {
+              ...prev,
+              items: mergedItems,
+              status: order.status,
+              receiptNumber: order.receiptNumber || null,
+            };
+          }
+          return prev;
+        });
       } catch (error) {
         console.error('Failed to fetch order status:', error);
         toast({
@@ -89,16 +185,65 @@ const BillOut = () => {
     };
 
     fetchOrderStatus();
-    const interval = setInterval(fetchOrderStatus, 10000);
-    return () => clearInterval(interval);
+    return () => {};
   }, [orderId]);
 
+  const mergeOrders = (existingItems, newItems) => {
+    if (!existingItems?.length) {
+      return newItems.map((item) => ({
+        ...item,
+        timestamp: Date.now(),
+      }));
+    }
+
+    // Create timestamp for this batch of new items
+    const batchTimestamp = Date.now();
+
+    // Keep existing items unchanged
+    const merged = [...existingItems];
+
+    // Add new items with new timestamp
+    const newItemsWithTimestamp = newItems.map((newItem) => ({
+      ...newItem,
+      timestamp: batchTimestamp,
+      originalQuantity: newItem.quantity,
+      price: newItem.price,
+      flavorHistory: newItem.flavorHistory || [],
+    }));
+
+    return [...merged, ...newItemsWithTimestamp];
+  };
+
   const handleOrderAgain = () => {
+    const existingUnliwings = orderState.items.find((item) => item.isUnliwings);
+
+    let itemsToPass;
+    if (existingUnliwings) {
+      itemsToPass = orderState.items.map((item) => {
+        if (item.isUnliwings) {
+          return {
+            ...item,
+            selectedFlavors: [],
+            flavorHistory: [
+              ...(item.flavorHistory || []),
+              item.selectedFlavors,
+            ],
+            flavorOrderStatus: 'flavor_pending',
+            price: item.price,
+            originalQuantity: item.originalQuantity || item.quantity,
+          };
+        }
+        return item;
+      });
+    } else {
+      itemsToPass = orderState.items.filter((item) => !isUnliwingsItem(item));
+    }
+
     navigate('/order', {
       state: {
         tableNumber,
         orderId,
-        currentItems: currentItems.filter((item) => !isUnliwingsItem(item)),
+        currentItems: itemsToPass,
       },
     });
   };
@@ -115,16 +260,18 @@ const BillOut = () => {
         return;
       }
 
-      // Clean table number format
       const cleanTableNumber = tableNumber.toString().replace('Table-', '');
 
       const receipt = await generateReceipt({
         tableNumber: cleanTableNumber,
-        orderId, // Pass current order ID
+        orderId,
       });
 
-      setReceiptNumber(receipt.receiptNumber);
-      setOrderStatus('completed');
+      setOrderState((prev) => ({
+        ...prev,
+        receiptNumber: receipt.receiptNumber,
+        status: 'completed',
+      }));
 
       // Clear table orders
       dispatch({
@@ -148,16 +295,23 @@ const BillOut = () => {
     }
   };
 
-  const calculateTotal = () => {
-    return currentItems.reduce((total, item) => {
+  const calculateTotal = (items) => {
+    if (!items) return 0;
+
+    return items.reduce((sum, item) => {
       if (item.isUnliwings) {
-        // Only charge for initial orders, not re-orders
-        return item.flavorHistory?.length > 0
-          ? total // Skip charges for re-orders
-          : total + item.price * (item.originalQuantity || item.quantity);
+        // For Unliwings, only charge initial order
+        const isInitialOrder = !item.flavorHistory?.length;
+        return isInitialOrder
+          ? sum + item.price * (item.originalQuantity || item.quantity)
+          : sum;
       }
-      return total + item.price * item.quantity;
+      return sum + item.price * item.quantity;
     }, 0);
+  };
+
+  const calculateGrandTotal = (orders) => {
+    return orders.reduce((sum, order) => sum + order.total, 0);
   };
 
   return (
@@ -191,10 +345,10 @@ const BillOut = () => {
                   <span className="text-muted-foreground">Table:</span>
                   <span>{tableNumber}</span>
                 </div>
-                {orderStatus && (
+                {orderState.status && (
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">Status:</span>
-                    <StatusBadge status={orderStatus} />
+                    <StatusBadge status={orderState.status} />
                   </div>
                 )}
               </div>
@@ -202,81 +356,82 @@ const BillOut = () => {
               <Separator />
 
               <div className="space-y-4">
-                <div className="grid grid-cols-4 text-sm font-medium text-muted-foreground">
-                  <span className="col-span-2">Item</span>
-                  <span className="text-right">Qty</span>
-                  <span className="text-right">Price</span>
-                </div>
-
-                {currentItems?.map((item, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: index * 0.1 }}
+                {groupOrdersByNumber(orderState.items).map((order) => (
+                  <div
+                    key={order.id}
+                    className="border rounded-lg p-4 space-y-4"
                   >
-                    <div className="grid grid-cols-4 text-sm">
-                      <div className="col-span-2">
-                        <span className="font-medium">{item.name}</span>
-                        {item.isUnliwings && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            <div>
-                              <span className="font-medium">
-                                ({item.originalQuantity || item.quantity}{' '}
-                                {(item.originalQuantity || item.quantity) > 1
-                                  ? 'persons'
-                                  : 'person'}
-                                )
-                              </span>
-                            </div>
-                            {/* Only show Current Order if there are flavors */}
-                            {item.selectedFlavors?.length > 0 && (
-                              <div>
-                                Current Order:{' '}
-                                {item.selectedFlavors?.join(', ')}
-                              </div>
-                            )}
-                            {/* Only show Previous Orders if there's history */}
-                            {item.flavorHistory?.length > 0 && (
-                              <div className="mt-1">
-                                Previous Orders:
-                                {item.flavorHistory.map((flavors, i) => (
-                                  <div key={i} className="ml-2">
-                                    #{i + 1}: {flavors.join(', ')}
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-medium">
+                        Order #{order.orderNumber}
+                      </h3>
+                      <span className="text-sm text-muted-foreground">
+                        {new Date(order.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2">
+                      {order.items.map((item, index) => (
+                        <div
+                          key={index}
+                          className="grid grid-cols-4 text-sm gap-4"
+                        >
+                          <div className="col-span-2">
+                            <div className="font-medium">{item.name}</div>
+                            {item.isUnliwings && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                <div>
+                                  Selected: {item.selectedFlavors?.join(', ')}
+                                </div>
+                                {item.flavorHistory?.length > 0 && (
+                                  <div className="text-xs text-blue-500">
+                                    (Reorder - No Charge)
                                   </div>
-                                ))}
+                                )}
+                                <div>
+                                  ({item.originalQuantity || item.quantity}{' '}
+                                  persons)
+                                </div>
                               </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                      <span className="text-right">
-                        {item.isUnliwings
-                          ? item.originalQuantity || item.quantity
-                          : item.quantity}
-                      </span>
-                      <span className="text-right">
-                        ₱
-                        {(item.isUnliwings
-                          ? item.flavorHistory?.length > 0
-                            ? 0 // Show zero for re-orders
-                            : item.price *
-                              (item.originalQuantity || item.quantity)
-                          : item.price * item.quantity
-                        ).toFixed(2)}
-                      </span>
+                          <div className="text-right">
+                            {item.originalQuantity || item.quantity}x
+                          </div>
+                          <div className="text-right">
+                            ₱
+                            {(item.isUnliwings
+                              ? item.flavorHistory?.length > 0
+                                ? 0
+                                : item.price *
+                                  (item.originalQuantity || item.quantity)
+                              : item.price * item.quantity
+                            ).toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </motion.div>
+
+                    <div className="flex justify-end pt-2 border-t">
+                      <div className="text-sm font-medium">
+                        Order Total: ₱{order.total.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
                 ))}
-              </div>
 
-              <Separator />
+                <Separator />
 
-              <div className="flex justify-between items-center">
-                <span className="font-semibold">Total</span>
-                <span className="text-2xl font-bold">
-                  ₱{calculateTotal().toFixed(2)}
-                </span>
+                {/* Grand Total */}
+                <div className="flex justify-between items-center text-lg font-bold">
+                  <span>Grand Total</span>
+                  <span>
+                    ₱
+                    {calculateGrandTotal(
+                      groupOrdersByNumber(orderState.items)
+                    ).toFixed(2)}
+                  </span>
+                </div>
               </div>
 
               {showGenerateReceiptButton && (
@@ -309,7 +464,7 @@ const BillOut = () => {
                 <div className="text-center space-y-4">
                   <div className="p-4 bg-green-50 rounded-lg">
                     <p className="font-semibold text-green-600">
-                      Receipt #{receiptNumber}
+                      Receipt #{orderState.receiptNumber}
                     </p>
                     <p className="text-sm text-green-600">
                       Please proceed to the counter for payment
@@ -326,7 +481,7 @@ const BillOut = () => {
                 </div>
               )}
 
-              {orderStatus === OrderStatus.PAID && (
+              {orderState === OrderStatus.PAID && (
                 <div className="text-center space-y-4">
                   <div className="p-4 bg-green-50 rounded-lg">
                     <p className="font-semibold text-green-600">

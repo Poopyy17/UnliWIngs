@@ -360,23 +360,39 @@ const OrderMenu = () => {
   };
 
   const hasActiveUnliwingsOrder = location.state?.currentItems?.some(
-    (item) => item.isUnliwings
+    (item) => item.isUnliwings && item.flavorOrderStatus === 'flavor_pending'
   );
 
   useEffect(() => {
     // Load existing order items from location state if available
     if (location.state?.currentItems) {
-      setOrderItems(location.state.currentItems);
-      const unliwingsItem = location.state.currentItems.find(
-        (item) => item.isUnliwings
-      );
+      const currentItems = location.state.currentItems;
+      const unliwingsItem = currentItems.find((item) => item.isUnliwings);
+
       if (unliwingsItem) {
-        setSelectedFlavors(unliwingsItem.selectedFlavors || []);
-        setUnliwingsHistory(unliwingsItem.flavorHistory || []);
+        // If this is a reorder, only keep the Unliwings item
+        if (unliwingsItem.flavorHistory?.length > 0) {
+          setOrderItems([
+            {
+              ...unliwingsItem,
+              selectedFlavors: [], // Clear for new selection
+              flavorOrderStatus: 'flavor_pending',
+            },
+          ]); // Only keep Unliwings
+          setSelectedFlavors([]);
+          setUnliwingsHistory(unliwingsItem.flavorHistory || []);
+        } else {
+          // First order - keep existing state
+          setOrderItems(currentItems);
+          setSelectedFlavors(unliwingsItem.selectedFlavors || []);
+          setUnliwingsHistory([]);
+        }
+      } else {
+        // No Unliwings - start fresh
+        setOrderItems([]);
       }
     }
   }, [location.state]);
-
   const addToOrder = (newItem, selectedSize = null) => {
     // Handle Unliwings items
     if (newItem.isUnliwings) {
@@ -544,6 +560,7 @@ const OrderMenu = () => {
     return item ? item.quantity : 0;
   };
 
+  // Update submitOrder function
   const submitOrder = async () => {
     try {
       const cleanTableNumber = tableNumber?.replace('Table-', '');
@@ -556,7 +573,10 @@ const OrderMenu = () => {
         return;
       }
 
-      // Prepare order items
+      const existingUnliwings = orderItems.find(
+        (item) => item.isUnliwings && item.flavorHistory?.length > 0
+      );
+
       const orderWithFlavors = orderItems.map((item) => {
         if (item.isUnliwings) {
           const isReorder = item.flavorHistory?.length > 0;
@@ -568,14 +588,18 @@ const OrderMenu = () => {
               : [],
             originalQuantity: item.originalQuantity || item.quantity,
             flavorOrderStatus: 'flavor_pending',
-            price: isReorder ? 0 : item.price, // Zero price for re-orders
-            total: isReorder ? 0 : item.price * item.originalQuantity,
+            status: 'pending',
+            price: item.price,
+            originalOrderId: location.state?.orderId, // Add reference to original order
           };
         }
+
         return {
           ...item,
           selectedFlavors: itemFlavors[item.id] || [],
           total: item.price * item.quantity,
+          status: 'pending',
+          originalOrderId: location.state?.orderId, // Add reference to original order
         };
       });
 
@@ -584,20 +608,31 @@ const OrderMenu = () => {
         items: orderWithFlavors,
         total: calculateTotal(orderWithFlavors),
         status: 'pending',
+        isPaid: false,
+        receiptNumber: null,
+        originalOrderId: location.state?.orderId, // Add reference to original order
       };
 
       const response = await createOrder(orderData);
       if (!response._id) throw new Error('Failed to create order');
 
+      // Update order context with only the new items
       dispatch({
         type: 'UPDATE_ITEMS',
         tableNumber,
         items: response.items,
         orderId: response._id,
+        status: response.status,
+        isPaid: response.isPaid,
       });
 
       navigate('/summary', {
-        state: { tableNumber, orderId: response._id },
+        state: {
+          tableNumber,
+          orderId: response._id,
+          items: response.items,
+          status: response.status,
+        },
       });
     } catch (error) {
       console.error('Order submission error:', error);
@@ -645,15 +680,21 @@ const OrderMenu = () => {
                 {/* Unliwings flavor selection */}
                 {category === 'Unliwings' && (
                   <div className="mb-8">
-                    {getItemQuantity('unliwings') > 0 && (
+                    {(getItemQuantity('unliwings') > 0 ||
+                      hasActiveUnliwingsOrder) && (
                       <>
                         <div className="flex justify-between items-center mb-4">
                           <h2 className="text-xl font-semibold">
                             Select Wing Flavors
-                            {getItemQuantity('unliwings') > 0 &&
+                            {unliwingsHistory.length > 0 ? (
+                              <span className="ml-2 text-sm text-muted-foreground">
+                                (Reorder #{unliwingsHistory.length + 1})
+                              </span>
+                            ) : (
                               ` (${getItemQuantity('unliwings')} person${
                                 getItemQuantity('unliwings') > 1 ? 's' : ''
-                              })`}
+                              })`
+                            )}
                           </h2>
                           {unliwingsHistory.length > 0 && (
                             <Badge variant="outline">

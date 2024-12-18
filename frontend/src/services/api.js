@@ -33,8 +33,12 @@ export const getOrders = async () => {
       throw new Error('Failed to fetch orders');
     }
     const orders = await response.json();
-    console.log('Fetched orders:', orders);
-    return orders;
+
+    // Add isPending property for better filtering
+    return orders.map((order) => ({
+      ...order,
+      isPending: order.status === 'completed' && !order.isPaid,
+    }));
   } catch (error) {
     console.error('Error fetching orders:', error);
     throw error;
@@ -160,6 +164,26 @@ export const updateOrderStatus = async (orderId, status) => {
   return response.json();
 };
 
+export const processTablePayment = async (tableNumber) => {
+  // First generate receipt
+  await generateReceipt({ tableNumber });
+
+  // Then process payment
+  const response = await fetch(`${API_URL}/orders/table/${tableNumber}/pay`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.message || 'Failed to process table payment');
+  }
+
+  return response.json();
+};
+
 export const generateReceipt = async ({ tableNumber, orderId }) => {
   console.log('Generating receipt for:', { tableNumber, orderId });
 
@@ -195,14 +219,4 @@ export const getTableOrders = async (tableNumber) => {
     console.error('Error fetching table orders:', error);
     throw error;
   }
-};
-
-export const markOrderAsPaid = async (orderId) => {
-  const response = await fetch(`${API_URL}/orders/${orderId}/pay`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-  return response.json();
 };

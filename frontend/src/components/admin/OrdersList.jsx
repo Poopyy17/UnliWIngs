@@ -159,12 +159,7 @@ const OrdersList = ({
             {/* Payment Button */}
             <div className="mt-4">
               <Button
-                onClick={() => {
-                  const orderId = table.orders[0]?._id;
-                  if (orderId) {
-                    onPayment(orderId);
-                  }
-                }}
+                onClick={() => onPayment(table.tableNumber)} // Changed from orderId to tableNumber
                 variant="outline"
                 className="w-full hover:bg-green-50"
               >
@@ -209,38 +204,53 @@ const OrdersList = ({
               </div>
 
               <div className="mt-4 space-y-2">
-                {order.items.map((item, index) => (
-                  <div key={index} className="flex justify-between text-sm">
-                    <div className="flex flex-col">
-                      <span>
-                        {item.name} x{' '}
-                        {item.isUnliwings
-                          ? item.originalQuantity || item.quantity
-                          : item.quantity}
-                      </span>
-                      {item.isUnliwings && (
-                        <div className="text-xs text-muted-foreground ml-4">
-                          <div>Current: {item.selectedFlavors?.join(', ')}</div>
-                          {item.flavorHistory?.map((flavors, i) => (
-                            <div key={i}>
-                              Re-order #{i + 1}: {flavors.join(', ')}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <span>
-                      ₱
-                      {(item.isUnliwings && item.flavorHistory?.length > 0
-                        ? 0
-                        : item.price *
-                          (item.isUnliwings
+                {order.items
+                  // Filter items before mapping
+                  .filter((item) => {
+                    // Always show Unliwings
+                    if (item.isUnliwings) return true;
+                    // For non-Unliwings, only show if:
+                    // 1. No originalOrderId (new item) OR
+                    // 2. Belongs to current order
+                    return (
+                      !item.originalOrderId ||
+                      item.originalOrderId === order._id
+                    );
+                  })
+                  .map((item, index) => (
+                    <div key={index} className="flex justify-between text-sm">
+                      <div className="flex flex-col">
+                        <span>
+                          {item.name} x{' '}
+                          {item.isUnliwings
                             ? item.originalQuantity || item.quantity
-                            : item.quantity)
-                      ).toFixed(2)}
-                    </span>
-                  </div>
-                ))}
+                            : item.quantity}
+                        </span>
+                        {item.isUnliwings && (
+                          <div className="text-xs text-muted-foreground ml-4">
+                            <div>
+                              Current: {item.selectedFlavors?.join(', ')}
+                            </div>
+                            {item.flavorHistory?.map((flavors, i) => (
+                              <div key={i}>
+                                Re-order #{i + 1}: {flavors.join(', ')}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <span>
+                        ₱
+                        {(item.isUnliwings && item.flavorHistory?.length > 0
+                          ? 0
+                          : item.price *
+                            (item.isUnliwings
+                              ? item.originalQuantity || item.quantity
+                              : item.quantity)
+                        ).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
               </div>
 
               {order.status !== OrderStatus.PAID &&

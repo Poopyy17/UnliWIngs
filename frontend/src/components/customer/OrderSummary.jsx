@@ -26,87 +26,64 @@ const OrderSummary = () => {
 
   const isUnliwingsItem = (item) => item.isUnliwings === true;
 
-  useEffect(() => {
-    console.log('OrderSummary mounted with:', {
-      orderId,
-      tableNumber,
-      newItems,
-    });
-    fetchOrderDetails();
-  }, [orderId]);
-
+  // Update fetchOrderDetails function
   const fetchOrderDetails = async () => {
     if (!orderId) return;
     try {
       setIsLoading(true);
       const order = await getOrder(orderId);
-      let mergedItems = [...order.items];
 
       if (newItems?.length > 0) {
+        const existingUnliwings = order.items.find(isUnliwingsItem);
         const newUnliwings = newItems.find(isUnliwingsItem);
-        const existingUnliwings = mergedItems.find(isUnliwingsItem);
 
-        // Handle Unliwings
-        if (newUnliwings && existingUnliwings) {
-          mergedItems = mergedItems.map((item) => {
-            if (item.isUnliwings) {
-              // Get current state
-              const currentFlavors = item.selectedFlavors || [];
-              const updatedHistory = [...(item.flavorHistory || [])];
+        let mergedItems = [...order.items];
 
-              // Add current flavors to history before updating
-              if (currentFlavors.length > 0) {
-                updatedHistory.push(currentFlavors);
-              }
+        newItems.forEach((newItem) => {
+          // Add timestamp to new items
+          const itemWithTimestamp = {
+            ...newItem,
+            timestamp: new Date(),
+            orderId: orderId, // Ensure orderId is set for new items
+          };
 
-              // Update with new flavors
-              return {
-                ...item,
-                selectedFlavors: newUnliwings.selectedFlavors, // New flavors
-                flavorHistory: updatedHistory, // Updated history
-                originalQuantity: item.originalQuantity || item.quantity,
-                quantity: 1, // Reset for new order
-                flavorOrderStatus: 'flavor_pending',
+          if (newItem.isUnliwings) {
+            const existingIndex = mergedItems.findIndex(
+              (item) => item.isUnliwings && !item.flavorHistory?.length
+            );
+            if (existingIndex !== -1) {
+              mergedItems[existingIndex] = {
+                ...itemWithTimestamp,
+                flavorHistory: [
+                  ...(existingUnliwings?.flavorHistory || []),
+                  existingUnliwings?.selectedFlavors,
+                ],
+                originalQuantity:
+                  existingUnliwings?.originalQuantity || newItem.quantity,
               };
+            } else {
+              mergedItems.push(itemWithTimestamp);
             }
-            return item;
-          });
-        } else if (newUnliwings) {
-          // New Unliwings order
-          mergedItems.push({
-            ...newUnliwings,
-            flavorHistory: [],
-            originalQuantity: newUnliwings.quantity,
-            quantity: newUnliwings.quantity,
-            flavorOrderStatus: 'flavor_pending',
-          });
-        }
-
-        // Handle other items
-        const otherItems = newItems.filter((item) => !isUnliwingsItem(item));
-        otherItems.forEach((newItem) => {
-          const existingItem = mergedItems.find(
-            (item) => item.id === newItem.id && !isUnliwingsItem(item)
-          );
-          if (existingItem) {
-            existingItem.quantity += newItem.quantity;
           } else {
-            mergedItems.push(newItem);
+            mergedItems.push(itemWithTimestamp);
           }
         });
+
+        setOrderDetails({
+          ...order,
+          items: mergedItems,
+        });
+
+        // Update global state
+        dispatch({
+          type: 'UPDATE_ITEMS',
+          tableNumber,
+          items: mergedItems,
+          orderId: order._id,
+        });
+      } else {
+        setOrderDetails(order);
       }
-
-      setOrderDetails({
-        ...order,
-        items: mergedItems,
-      });
-
-      dispatch({
-        type: 'UPDATE_ITEMS',
-        tableNumber,
-        items: mergedItems,
-        orderId: order._id,
-      });
     } catch (error) {
       console.error('Failed to fetch order:', error);
       toast({
@@ -119,16 +96,32 @@ const OrderSummary = () => {
     }
   };
 
+  useEffect(() => {
+    console.log('OrderSummary mounted with:', {
+      orderId,
+      tableNumber,
+      newItems,
+    });
+    fetchOrderDetails();
+  }, [orderId]);
+
   const accumulatedOrders =
     orderDetails?.items || state.orders[tableNumber] || [];
 
   const calculateTotal = () => {
     return accumulatedOrders.reduce((total, item) => {
       if (item.isUnliwings) {
-        // Use originalQuantity for Unliwings pricing
-        return total + item.price * (item.originalQuantity || item.quantity);
+        // For Unliwings - only charge initial order
+        const isReorder = item.flavorHistory?.length > 0;
+        return isReorder
+          ? total
+          : total + item.price * (item.originalQuantity || item.quantity);
       }
-      return total + item.price * item.quantity;
+      // For non-Unliwings - only include current order items
+      if (!item.originalOrderId || item.originalOrderId === orderId) {
+        return total + item.price * item.quantity;
+      }
+      return total;
     }, 0);
   };
 
@@ -144,7 +137,7 @@ const OrderSummary = () => {
 
     navigate('/bill', {
       state: {
-        orderItems: accumulatedOrders,
+        orderItems: orderDetails?.items || accumulatedOrders,
         tableNumber,
         orderId,
         total: calculateTotal(),
@@ -197,76 +190,83 @@ const OrderSummary = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {accumulatedOrders.map((item, index) => (
-                    <motion.div
-                      key={index}
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      transition={{ delay: index * 0.1 }}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="space-y-1">
-                          <h3 className="font-medium">
-                            {item.name}
-                            {item.isUnliwings && (
-                              <span className="text-sm text-muted-foreground ml-2">
-                                ({item.originalQuantity || item.quantity}{' '}
-                                {(item.originalQuantity || item.quantity) > 1
-                                  ? 'persons'
-                                  : 'person'}
-                                )
-                              </span>
-                            )}
-                          </h3>
-                          <div className="flex items-center text-sm text-muted-foreground">
-                            <span>
-                              ₱{item.price.toFixed(2)} ×{' '}
-                              {item.isUnliwings
-                                ? item.originalQuantity || item.quantity
-                                : item.quantity}
-                            </span>
-                          </div>
-                          {item.isUnliwings && (
-                            <div className="space-y-2 mt-2">
-                              <div className="text-sm text-muted-foreground">
-                                <span className="font-medium">
-                                  Current Order:
-                                </span>{' '}
-                                {item.selectedFlavors?.join(', ')}
-                              </div>
-                              {item.flavorHistory?.length > 0 && (
-                                <div className="text-sm space-y-1">
-                                  <span className="font-medium text-muted-foreground">
-                                    Previous Orders:
-                                  </span>
-                                  {item.flavorHistory.map((flavors, idx) => (
-                                    <div
-                                      key={idx}
-                                      className="text-xs text-muted-foreground pl-2"
-                                    >
-                                      #{idx + 1}: {flavors.join(', ')}
-                                    </div>
-                                  ))}
-                                </div>
+                  {accumulatedOrders
+                    .filter(
+                      (item) =>
+                        item.isUnliwings ||
+                        !item.originalOrderId ||
+                        item.originalOrderId === orderId
+                    )
+                    .map((item, index) => (
+                      <motion.div
+                        key={index}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: index * 0.1 }}
+                      >
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <h3 className="font-medium">
+                              {item.name}
+                              {item.isUnliwings && (
+                                <span className="text-sm text-muted-foreground ml-2">
+                                  ({item.originalQuantity || item.quantity}{' '}
+                                  {(item.originalQuantity || item.quantity) > 1
+                                    ? 'persons'
+                                    : 'person'}
+                                  )
+                                </span>
                               )}
+                            </h3>
+                            <div className="flex items-center text-sm text-muted-foreground">
+                              <span>
+                                ₱{item.price.toFixed(2)} ×{' '}
+                                {item.isUnliwings
+                                  ? item.originalQuantity || item.quantity
+                                  : item.quantity}
+                              </span>
                             </div>
-                          )}
+                            {item.isUnliwings && (
+                              <div className="space-y-2 mt-2">
+                                <div className="text-sm text-muted-foreground">
+                                  <span className="font-medium">
+                                    Current Order:
+                                  </span>{' '}
+                                  {item.selectedFlavors?.join(', ')}
+                                </div>
+                                {item.flavorHistory?.length > 0 && (
+                                  <div className="text-sm space-y-1">
+                                    <span className="font-medium text-muted-foreground">
+                                      Previous Orders:
+                                    </span>
+                                    {item.flavorHistory.map((flavors, idx) => (
+                                      <div
+                                        key={idx}
+                                        className="text-xs text-muted-foreground pl-2"
+                                      >
+                                        #{idx + 1}: {flavors.join(', ')}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <p className="font-medium">
+                            ₱
+                            {(
+                              item.price *
+                              (item.isUnliwings
+                                ? item.originalQuantity || item.quantity
+                                : item.quantity)
+                            ).toFixed(2)}
+                          </p>
                         </div>
-                        <p className="font-medium">
-                          ₱
-                          {(
-                            item.price *
-                            (item.isUnliwings
-                              ? item.originalQuantity || item.quantity
-                              : item.quantity)
-                          ).toFixed(2)}
-                        </p>
-                      </div>
-                      {index < accumulatedOrders.length - 1 && (
-                        <Separator className="my-4" />
-                      )}
-                    </motion.div>
-                  ))}
+                        {index < accumulatedOrders.length - 1 && (
+                          <Separator className="my-4" />
+                        )}
+                      </motion.div>
+                    ))}
                 </div>
               )}
             </CardContent>
