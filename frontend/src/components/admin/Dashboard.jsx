@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { getOrders, updateOrderStatus, markOrderAsPaid } from "@/services/api";
-import { Loading } from "@/components/ui/loading";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { getOrders, updateOrderStatus, markOrderAsPaid } from '@/services/api';
+import { Loading } from '@/components/ui/loading';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
 import {
   ArrowUpRight,
   DollarSign,
@@ -14,10 +14,19 @@ import {
   PackageOpen,
   CreditCard,
   CheckCircle,
-} from "lucide-react";
-import OrdersList from "./OrdersList";
-import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+} from 'lucide-react';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
+import OrdersList from './OrdersList';
+import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 const Dashboard = () => {
   const { toast } = useToast();
@@ -25,6 +34,21 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
 
   const isUnliwingsItem = (item) => item.isUnliwings === true;
+
+  const calculateTableTotal = (orders) => {
+    return orders.reduce((sum, order) => {
+      const orderTotal = order.items.reduce((itemSum, item) => {
+        if (item.isUnliwings) {
+          // Match BillOut logic - only charge initial orders
+          return item.flavorHistory?.length > 0
+            ? itemSum // Skip re-order charges
+            : itemSum + item.price * (item.originalQuantity || item.quantity);
+        }
+        return itemSum + item.price * item.quantity;
+      }, 0);
+      return sum + orderTotal;
+    }, 0);
+  };
 
   useEffect(() => {
     fetchOrders();
@@ -38,9 +62,9 @@ const Dashboard = () => {
       setOrders(data);
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to fetch orders",
-        variant: "destructive",
+        title: 'Error',
+        description: 'Failed to fetch orders',
+        variant: 'destructive',
       });
     } finally {
       setLoading(false);
@@ -48,12 +72,8 @@ const Dashboard = () => {
   };
 
   const activeOrders = orders.filter((order) =>
-    ["pending", "preparing"].includes(order.status)
+    ['pending', 'accepted', 'preparing'].includes(order.status)
   );
-
-  const activeTablesCount = new Set(
-    activeOrders.map((order) => order.tableNumber)
-  ).size;
 
   const todaysRevenue = orders
     .filter((order) => {
@@ -65,26 +85,71 @@ const Dashboard = () => {
 
   const totalOrders = orders.length;
   const completedOrders = orders.filter(
-    (order) => order.status === "completed"
+    (order) => order.status === 'completed'
   ).length;
+
+  const calculateTotal = (items) => {
+    return items.reduce((sum, item) => {
+      if (item.isUnliwings) {
+        return item.flavorHistory?.length > 0
+          ? sum // Skip re-order charges
+          : sum + item.price * (item.originalQuantity || item.quantity);
+      }
+      return sum + item.price * item.quantity;
+    }, 0);
+  };
 
   const handleStatusUpdate = async (orderId, newStatus) => {
     try {
       const updatedOrder = await updateOrderStatus(orderId, newStatus);
-      setOrders(
-        orders.map((order) => (order._id === orderId ? updatedOrder : order))
+
+      // Update orders state and move to correct tab
+      setOrders((prevOrders) =>
+        prevOrders.map((order) => {
+          if (order._id === orderId) {
+            return {
+              ...updatedOrder,
+              total: calculateTotal(updatedOrder.items), // Recalculate total
+            };
+          }
+          return order;
+        })
       );
+
+      await fetchOrders(); // Refresh orders list
+
       toast({
-        title: "Status Updated",
+        title: 'Status Updated',
         description: `Order status changed to ${newStatus}`,
       });
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to update order status",
-        variant: "destructive",
+        title: 'Error',
+        description: 'Failed to update order status',
+        variant: 'destructive',
       });
     }
+  };
+
+  const groupOrdersForPayment = (orders) => {
+    if (!Array.isArray(orders)) return [];
+
+    const groupedByTable = orders.reduce((acc, order) => {
+      const key = order.tableNumber.toString();
+      if (!acc[key]) {
+        acc[key] = {
+          tableNumber: key,
+          orders: [],
+          total: 0,
+          receiptNumber: order.receiptNumber,
+        };
+      }
+      acc[key].orders.push(order);
+      acc[key].total += calculateTotal(order.items);
+      return acc;
+    }, {});
+
+    return Object.values(groupedByTable);
   };
 
   const handlePayment = async (orderId) => {
@@ -94,14 +159,14 @@ const Dashboard = () => {
         orders.map((order) => (order._id === orderId ? updatedOrder : order))
       );
       toast({
-        title: "Payment Processed",
-        description: "Order has been marked as paid",
+        title: 'Payment Processed',
+        description: 'Order has been marked as paid',
       });
     } catch (error) {
       toast({
-        title: "Error",
-        description: "Failed to process payment",
-        variant: "destructive",
+        title: 'Error',
+        description: 'Failed to process payment',
+        variant: 'destructive',
       });
     }
   };
@@ -119,17 +184,48 @@ const Dashboard = () => {
   };
 
   const groupOrdersByTable = (orders) => {
-    const tables = { 1: [], 2: [], 3: [], 4: [] };
+    const tables = {
+      1: [],
+      2: [],
+      3: [],
+      4: [],
+    };
+
     orders.forEach((order) => {
-      if (tables[order.tableNumber]) {
-        tables[order.tableNumber].push(order);
+      if (order.tableNumber && order.status !== 'completed') {
+        const tableNum = order.tableNumber.toString().replace('Table-', '');
+
+        if (!tables.hasOwnProperty(tableNum)) {
+          console.warn(`Invalid table number: ${tableNum}`);
+          return;
+        }
+
+        const hasPendingReorders = order.items.some(
+          (item) =>
+            item.isUnliwings && item.flavorOrderStatus === 'flavor_pending'
+        );
+
+        if (
+          ['pending', 'accepted', 'preparing'].includes(order.status) ||
+          hasPendingReorders
+        ) {
+          tables[tableNum].push(order);
+        }
       }
     });
+
     return tables;
   };
 
-  const tableStatus = (tableOrders) => {
-    return tableOrders.length > 0 ? "Occupied" : "Unoccupied";
+  const StatusIcon = ({ status }) => {
+    switch (status) {
+      case 'completed':
+        return <CheckCircle2 className="h-5 w-5 text-green-500" />;
+      case 'preparing':
+        return <Clock className="h-5 w-5 text-yellow-500" />;
+      default:
+        return <AlertCircle className="h-5 w-5 text-red-500" />;
+    }
   };
 
   return (
@@ -235,41 +331,202 @@ const Dashboard = () => {
               <Loading />
             </div>
           ) : (
-            <>
-              {activeOrders.length === 0 ? (
-                <EmptyState
-                  icon={PackageOpen}
-                  title="No Active Orders"
-                  description="New orders will appear here when customers place them"
-                />
-              ) : (
-                <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
-                  {Object.entries(groupOrdersByTable(activeOrders)).map(
-                    ([tableNumber, tableOrders]) => (
-                      <Card key={tableNumber} className="p-4 h-full">
-                        <div className="flex items-center justify-between mb-4">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
+              {Object.entries(groupOrdersByTable(activeOrders)).map(
+                ([tableNumber, tableOrders]) => (
+                  <Card key={tableNumber} className="p-4 h-full">
+                    <div className="flex flex-col h-full">
+                      {/* Table Header */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
                           <h3 className="text-lg font-semibold">
-                            Table {tableNumber} - {tableStatus(tableOrders)}
+                            Table {tableNumber}
                           </h3>
-                          <Badge>
-                            {tableOrders.length}{" "}
-                            {tableOrders.length === 1 ? "Order" : "Orders"}
-                          </Badge>
+                          <p className="text-sm text-muted-foreground">
+                            {tableOrders.length} active order
+                            {tableOrders.length !== 1 ? 's' : ''}
+                          </p>
                         </div>
-                        <div className="overflow-y-auto max-h-96">
-                          <OrdersList
-                            orders={tableOrders}
-                            onStatusUpdate={handleStatusUpdate}
-                            onPayment={handlePayment}
-                            className="mt-4"
-                          />
+                        <Badge
+                          variant={
+                            tableOrders.length > 0 ? 'default' : 'secondary'
+                          }
+                        >
+                          {tableOrders.length > 0 ? 'Occupied' : 'Available'}
+                        </Badge>
+                      </div>
+
+                      {/* Table Total */}
+                      {tableOrders.length > 0 && (
+                        <div className="mb-4 p-3 bg-muted/10 rounded-lg">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-muted-foreground">
+                              Table Total
+                            </span>
+                            <span className="text-lg font-bold">
+                              ₱{calculateTableTotal(tableOrders).toFixed(2)}
+                            </span>
+                          </div>
                         </div>
-                      </Card>
-                    )
-                  )}
-                </div>
+                      )}
+
+                      {/* Orders List */}
+                      {tableOrders.length > 0 && (
+                        <Accordion type="single" collapsible className="w-full">
+                          {tableOrders.map((order) => (
+                            <AccordionItem key={order._id} value={order._id}>
+                              <AccordionTrigger className="hover:no-underline">
+                                <div className="flex items-center justify-between w-full">
+                                  <div className="flex items-center gap-2">
+                                    <StatusIcon status={order.status} />
+                                    <span>Order #{order._id.slice(-4)}</span>
+                                    <span className="text-sm text-muted-foreground">
+                                      (₱{order.total.toFixed(2)})
+                                    </span>
+                                  </div>
+                                  <Badge
+                                    variant={
+                                      order.items.some(
+                                        (item) =>
+                                          item.isUnliwings &&
+                                          item.flavorOrderStatus ===
+                                            'flavor_accepted'
+                                      )
+                                        ? 'success'
+                                        : 'default'
+                                    }
+                                    className="ml-2"
+                                  >
+                                    {order.items.some(
+                                      (item) =>
+                                        item.isUnliwings &&
+                                        item.flavorOrderStatus ===
+                                          'flavor_accepted'
+                                    )
+                                      ? 'Accepted'
+                                      : order.status}
+                                  </Badge>
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent>
+                                <div className="space-y-4 p-2">
+                                  {order.items.map((item, idx) => (
+                                    <div
+                                      key={idx}
+                                      className={cn(
+                                        'p-3 rounded-lg',
+                                        item.isUnliwings &&
+                                          'border border-blue-200 bg-blue-50'
+                                      )}
+                                    >
+                                      <div className="flex justify-between items-start">
+                                        <div>
+                                          <p className="font-medium">
+                                            {item.name}
+                                          </p>
+                                          {item.isUnliwings && (
+                                            <div className="text-sm text-muted-foreground mt-1">
+                                              <p>
+                                                Current Flavors:{' '}
+                                                {item.selectedFlavors?.join(
+                                                  ', '
+                                                )}
+                                              </p>
+                                              {item.flavorHistory?.length >
+                                                0 && (
+                                                <div className="mt-1">
+                                                  <p>Previous Orders:</p>
+                                                  {item.flavorHistory.map(
+                                                    (flavors, i) => (
+                                                      <p
+                                                        key={i}
+                                                        className="ml-2"
+                                                      >
+                                                        #{i + 1}:{' '}
+                                                        {flavors.join(', ')}
+                                                      </p>
+                                                    )
+                                                  )}
+                                                </div>
+                                              )}
+                                              <p className="mt-1">
+                                                Quantity:{' '}
+                                                {item.originalQuantity ||
+                                                  item.quantity}
+                                              </p>
+                                            </div>
+                                          )}
+                                        </div>
+                                        <p className="font-medium">
+                                          ₱
+                                          {item.isUnliwings &&
+                                          item.flavorHistory?.length > 0
+                                            ? '0.00' // Show zero for re-orders
+                                            : (
+                                                item.price *
+                                                (item.originalQuantity ||
+                                                  item.quantity)
+                                              ).toFixed(2)}
+                                        </p>
+                                      </div>
+
+                                      {/* Accept Flavor Button */}
+                                      {item.isUnliwings &&
+                                        item.flavorOrderStatus ===
+                                          'flavor_pending' && (
+                                          <div className="mt-2">
+                                            <Button
+                                              size="sm"
+                                              onClick={() =>
+                                                handleStatusUpdate(
+                                                  order._id,
+                                                  'accepted'
+                                                )
+                                              }
+                                              variant="outline"
+                                            >
+                                              Accept New Flavors
+                                            </Button>
+                                          </div>
+                                        )}
+                                    </div>
+                                  ))}
+                                  {/* Individual Order Total */}
+                                  <div className="flex justify-between items-center pt-4 border-t">
+                                    <span className="font-semibold">
+                                      Order Total:
+                                    </span>
+                                    <span className="font-bold">
+                                      ₱
+                                      {order.items
+                                        .reduce((sum, item) => {
+                                          if (item.isUnliwings) {
+                                            return item.flavorHistory?.length >
+                                              0
+                                              ? sum // Skip re-order charges
+                                              : sum +
+                                                  item.price *
+                                                    (item.originalQuantity ||
+                                                      item.quantity);
+                                          }
+                                          return (
+                                            sum + item.price * item.quantity
+                                          );
+                                        }, 0)
+                                        .toFixed(2)}
+                                    </span>
+                                  </div>
+                                </div>
+                              </AccordionContent>
+                            </AccordionItem>
+                          ))}
+                        </Accordion>
+                      )}
+                    </div>
+                  </Card>
+                )
               )}
-            </>
+            </div>
           )}
         </TabsContent>
 
@@ -281,7 +538,7 @@ const Dashboard = () => {
           ) : (
             <>
               {orders.filter(
-                (order) => order.status === "completed" && !order.isPaid
+                (order) => order.status === 'completed' && !order.isPaid
               ).length === 0 ? (
                 <EmptyState
                   icon={CreditCard}
@@ -291,11 +548,12 @@ const Dashboard = () => {
               ) : (
                 <OrdersList
                   orders={orders.filter(
-                    (order) => order.status === "completed" && !order.isPaid
+                    (order) => order.status === 'completed' && !order.isPaid
                   )}
                   onStatusUpdate={handleStatusUpdate}
                   onPayment={handlePayment}
                   className="mt-4"
+                  isPaymentView={true}
                 />
               )}
             </>

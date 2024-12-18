@@ -1,326 +1,326 @@
-import { useState, useEffect } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
-import { createOrder, updateOrder } from "@/services/api";
-import { useOrder } from "../../../context/orderContext";
-import { motion } from "framer-motion";
-import { MinusCircle, PlusCircle, ShoppingCart } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { useToast } from '@/hooks/use-toast';
+import { createOrder, updateOrder } from '@/services/api';
+import { useOrder } from '../../../context/orderContext';
+import { motion } from 'framer-motion';
+import { MinusCircle, PlusCircle, ShoppingCart } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
 const MOCK_MENU = [
   {
-    id: "unliwings",
-    name: "Unliwings",
+    id: 'unliwings',
+    name: 'Unliwings',
     price: 279,
-    category: "Unliwings",
-    description: "Unlimited wings with choice of flavors (Price per person)",
+    category: 'Unliwings',
+    description: 'Unlimited wings with choice of flavors (Price per person)',
     isUnliwings: true,
     allowQuantity: true,
   },
   // Ala Carte
   {
-    id: "alacarte_3",
-    name: "3pcs Chicken",
+    id: 'alacarte_3',
+    name: '3pcs Chicken',
     price: 89,
-    category: "Ala Carte",
-    description: "3pcs chicken (1 Flavor only)",
+    category: 'Ala Carte',
+    description: '3pcs chicken (1 Flavor only)',
     maxFlavors: 1,
     pieces: 3,
   },
   {
-    id: "alacarte_6",
-    name: "6pcs Chicken",
+    id: 'alacarte_6',
+    name: '6pcs Chicken',
     price: 149,
-    category: "Ala Carte",
-    description: "6pcs chicken (Max 2 Flavors)",
+    category: 'Ala Carte',
+    description: '6pcs chicken (Max 2 Flavors)',
     maxFlavors: 2,
     pieces: 6,
   },
   {
-    id: "alacarte_12",
-    name: "12pcs Chicken",
+    id: 'alacarte_12',
+    name: '12pcs Chicken',
     price: 279,
-    category: "Ala Carte",
-    description: "12pcs chicken (Max 3 Flavors)",
+    category: 'Ala Carte',
+    description: '12pcs chicken (Max 3 Flavors)',
     maxFlavors: 3,
     pieces: 12,
   },
   {
-    id: "alacarte_24",
-    name: "24pcs Chicken",
+    id: 'alacarte_24',
+    name: '24pcs Chicken',
     price: 549,
-    category: "Ala Carte",
-    description: "24pcs chicken (Max 4 Flavors)",
+    category: 'Ala Carte',
+    description: '24pcs chicken (Max 4 Flavors)',
     maxFlavors: 4,
     pieces: 24,
   },
   {
-    id: "alacarte_36",
-    name: "36pcs Chicken",
+    id: 'alacarte_36',
+    name: '36pcs Chicken',
     price: 829,
-    category: "Ala Carte",
-    description: "36pcs chicken (Max 6 Flavors)",
+    category: 'Ala Carte',
+    description: '36pcs chicken (Max 6 Flavors)',
     maxFlavors: 6,
     pieces: 36,
   },
   {
-    id: "alacarte_48",
-    name: "48pcs Chicken",
+    id: 'alacarte_48',
+    name: '48pcs Chicken',
     price: 999,
-    category: "Ala Carte",
-    description: "48pcs chicken (Max 8 Flavors)",
+    category: 'Ala Carte',
+    description: '48pcs chicken (Max 8 Flavors)',
     maxFlavors: 8,
     pieces: 48,
   },
   // Rice Meals
   {
-    id: "ricemeal_3",
-    name: "3pcs with Rice",
+    id: 'ricemeal_3',
+    name: '3pcs with Rice',
     price: 99,
-    category: "Rice Meals",
-    description: "3pcs chicken with 1 rice (1 Flavor only)",
+    category: 'Rice Meals',
+    description: '3pcs chicken with 1 rice (1 Flavor only)',
     maxFlavors: 1,
     rice: 1,
   },
   {
-    id: "ricemeal_6_1",
-    name: "6pcs with 1 Rice",
+    id: 'ricemeal_6_1',
+    name: '6pcs with 1 Rice',
     price: 159,
-    category: "Rice Meals",
-    description: "6pcs chicken with 1 rice (1 Flavor only)",
+    category: 'Rice Meals',
+    description: '6pcs chicken with 1 rice (1 Flavor only)',
     maxFlavors: 1,
     rice: 1,
   },
   {
-    id: "ricemeal_6_2",
-    name: "6pcs with 2 Rice",
+    id: 'ricemeal_6_2',
+    name: '6pcs with 2 Rice',
     price: 169,
-    category: "Rice Meals",
-    description: "6pcs chicken with 2 rice (1 Flavor only)",
+    category: 'Rice Meals',
+    description: '6pcs chicken with 2 rice (1 Flavor only)',
     maxFlavors: 1,
     rice: 2,
   },
   {
-    id: "ricemeal_12",
-    name: "12pcs with 2 Rice",
+    id: 'ricemeal_12',
+    name: '12pcs with 2 Rice',
     price: 299,
-    category: "Rice Meals",
-    description: "12pcs chicken with 2 rice (1 Flavor only)",
+    category: 'Rice Meals',
+    description: '12pcs chicken with 2 rice (1 Flavor only)',
     maxFlavors: 1,
     rice: 2,
   },
   {
-    id: "ricemeal_24",
-    name: "24pcs with Rice",
+    id: 'ricemeal_24',
+    name: '24pcs with Rice',
     price: 589,
-    category: "Rice Meals",
-    description: "24pcs chicken with 1 rice (1 Flavor only)",
+    category: 'Rice Meals',
+    description: '24pcs chicken with 1 rice (1 Flavor only)',
     maxFlavors: 1,
     rice: 1,
   },
   {
-    id: "ricemeal_nuggets",
-    name: "Nuggets with Rice",
+    id: 'ricemeal_nuggets',
+    name: 'Nuggets with Rice',
     price: 109,
-    category: "Rice Meals",
-    description: "Chicken nuggets with rice",
+    category: 'Rice Meals',
+    description: 'Chicken nuggets with rice',
     maxFlavors: 0,
     rice: 1,
   },
   // Snacks
   {
-    id: "nuggets",
-    name: "Chicken Nuggets",
+    id: 'nuggets',
+    name: 'Chicken Nuggets',
     price: 99,
-    category: "Snacks",
+    category: 'Snacks',
   },
   {
-    id: "kikiam",
-    name: "Kikiam",
+    id: 'kikiam',
+    name: 'Kikiam',
     price: 69,
-    category: "Snacks",
+    category: 'Snacks',
   },
   {
-    id: "lumpia",
-    name: "Lumpiang Shanghai",
+    id: 'lumpia',
+    name: 'Lumpiang Shanghai',
     price: 99,
-    category: "Snacks",
+    category: 'Snacks',
   },
   // Nachos
   {
-    id: "nachos_cheese",
-    name: "Cheesy Nachos",
+    id: 'nachos_cheese',
+    name: 'Cheesy Nachos',
     price: 79,
-    category: "Nachos",
+    category: 'Nachos',
   },
   {
-    id: "nachos_overload",
-    name: "Overload Nachos",
+    id: 'nachos_overload',
+    name: 'Overload Nachos',
     price: 89,
-    category: "Nachos",
+    category: 'Nachos',
   },
   {
-    id: "nachos_fries",
-    name: "Overload Nachos Fries",
+    id: 'nachos_fries',
+    name: 'Overload Nachos Fries',
     price: 99,
-    category: "Nachos",
+    category: 'Nachos',
   },
   // Fries
   {
-    id: "fries_cheese",
-    name: "Cheese Fries",
+    id: 'fries_cheese',
+    name: 'Cheese Fries',
     price: 59,
-    category: "Fries",
+    category: 'Fries',
   },
   {
-    id: "fries_sourcream",
-    name: "Sour Cream Fries",
+    id: 'fries_sourcream',
+    name: 'Sour Cream Fries',
     price: 59,
-    category: "Fries",
+    category: 'Fries',
   },
   {
-    id: "fries_bbq",
-    name: "BBQ Fries",
+    id: 'fries_bbq',
+    name: 'BBQ Fries',
     price: 59,
-    category: "Fries",
+    category: 'Fries',
   },
   // Refreshers
   {
-    id: "tea",
-    name: "House Blend Iced Tea",
-    category: "Refreshers",
+    id: 'tea',
+    name: 'House Blend Iced Tea',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   {
-    id: "strawberry",
-    name: "Strawberry",
-    category: "Refreshers",
+    id: 'strawberry',
+    name: 'Strawberry',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   {
-    id: "lychee",
-    name: "Lychee",
-    category: "Refreshers",
+    id: 'lychee',
+    name: 'Lychee',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   {
-    id: "green_apple",
-    name: "Green Apple",
-    category: "Refreshers",
+    id: 'green_apple',
+    name: 'Green Apple',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   {
-    id: "blueberry",
-    name: "Blueberry",
-    category: "Refreshers",
+    id: 'blueberry',
+    name: 'Blueberry',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   {
-    id: "lemon",
-    name: "Lemon",
-    category: "Refreshers",
+    id: 'lemon',
+    name: 'Lemon',
+    category: 'Refreshers',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
   },
   // Extras
   {
-    id: "rice",
-    name: "Rice",
+    id: 'rice',
+    name: 'Rice',
     price: 15,
-    category: "Extras",
+    category: 'Extras',
   },
   {
-    id: "dip_garlicmayo",
-    name: "Garlic Mayo Dip",
+    id: 'dip_garlicmayo',
+    name: 'Garlic Mayo Dip',
     price: 25,
-    category: "Extras",
+    category: 'Extras',
   },
   {
-    id: "dip_chilicheese",
-    name: "Chili Cheese Dip",
+    id: 'dip_chilicheese',
+    name: 'Chili Cheese Dip',
     price: 25,
-    category: "Extras",
+    category: 'Extras',
   },
   {
-    id: "dip_cheese",
-    name: "Cheese Dip",
+    id: 'dip_cheese',
+    name: 'Cheese Dip',
     price: 25,
-    category: "Extras",
+    category: 'Extras',
   },
   {
-    id: "dip_mayo",
-    name: "Plain Mayo",
+    id: 'dip_mayo',
+    name: 'Plain Mayo',
     price: 15,
-    category: "Extras",
+    category: 'Extras',
   },
   {
-    id: "dip_ketchup",
-    name: "Ketchup",
+    id: 'dip_ketchup',
+    name: 'Ketchup',
     price: 15,
-    category: "Extras",
+    category: 'Extras',
   },
 ];
 
 const REFRESHERS = [
   {
-    id: "tea",
-    name: "House Blend Iced Tea",
+    id: 'tea',
+    name: 'House Blend Iced Tea',
     sizes: [
-      { size: "Medium", price: 49 },
-      { size: "Large", price: 59 },
-      { size: "1 Liter", price: 79 },
+      { size: 'Medium', price: 49 },
+      { size: 'Large', price: 59 },
+      { size: '1 Liter', price: 79 },
     ],
-    category: "Refreshers",
+    category: 'Refreshers',
   },
   // Add other drinks with same structure
 ];
 
 const WING_FLAVORS = [
-  "Soy Garlic",
-  "Spicy Buffalo",
-  "Honey Butter",
-  "Honey Mustard",
-  "Garlic Parmesan",
-  "Wings Express Signature",
-  "Salted Egg",
-  "Spicy Teriyaki",
-  "Teriyaki",
-  "Honey Garlic",
-  "Lemon Glazed",
-  "Sweet Chili",
-  "Garlic Butter",
-  "BBQ",
-  "Spicy BBQ",
-  "Cheesy Cheese",
-  "Chili Cheese",
-  "Salt and Pepper",
+  'Soy Garlic',
+  'Spicy Buffalo',
+  'Honey Butter',
+  'Honey Mustard',
+  'Garlic Parmesan',
+  'Wings Express Signature',
+  'Salted Egg',
+  'Spicy Teriyaki',
+  'Teriyaki',
+  'Honey Garlic',
+  'Lemon Glazed',
+  'Sweet Chili',
+  'Garlic Butter',
+  'BBQ',
+  'Spicy BBQ',
+  'Cheesy Cheese',
+  'Chili Cheese',
+  'Salt and Pepper',
 ];
 
 const OrderMenu = () => {
@@ -347,6 +347,22 @@ const OrderMenu = () => {
     return acc;
   }, {});
 
+  const calculateTotal = (items) => {
+    return items.reduce((sum, item) => {
+      if (item.isUnliwings) {
+        // Only charge for initial order
+        return item.flavorHistory?.length > 0
+          ? sum
+          : sum + item.price * item.originalQuantity;
+      }
+      return sum + item.price * item.quantity;
+    }, 0);
+  };
+
+  const hasActiveUnliwingsOrder = location.state?.currentItems?.some(
+    (item) => item.isUnliwings
+  );
+
   useEffect(() => {
     // Load existing order items from location state if available
     if (location.state?.currentItems) {
@@ -362,20 +378,42 @@ const OrderMenu = () => {
   }, [location.state]);
 
   const addToOrder = (newItem, selectedSize = null) => {
+    // Handle Unliwings items
     if (newItem.isUnliwings) {
       setOrderItems((prevItems) => {
         const existingUnliwings = prevItems.find((item) => item.isUnliwings);
+
         if (existingUnliwings) {
           if (existingUnliwings.flavorHistory?.length > 0) {
-            // This is a reorder - keep quantity, update selectedFlavors
-            return prevItems;
-          } else {
-            // This is still initial order - allow quantity increase
+            // Re-order: preserve original quantity and update history
             return prevItems.map((item) =>
-              item.isUnliwings ? { ...item, quantity: item.quantity + 1 } : item
+              item.isUnliwings
+                ? {
+                    ...item,
+                    selectedFlavors: [],
+                    flavorHistory: [
+                      ...(item.flavorHistory || []),
+                      item.selectedFlavors,
+                    ],
+                    flavorOrderStatus: 'flavor_pending',
+                  }
+                : item
+            );
+          } else {
+            // Initial order: allow quantity increase
+            return prevItems.map((item) =>
+              item.isUnliwings
+                ? {
+                    ...item,
+                    quantity: item.quantity + 1,
+                    originalQuantity: item.quantity + 1,
+                  }
+                : item
             );
           }
         }
+
+        // New Unliwings order
         return [
           ...prevItems,
           {
@@ -383,46 +421,56 @@ const OrderMenu = () => {
             quantity: 1,
             selectedFlavors: [],
             flavorHistory: [],
-            initialOrder: true, // Flag to track initial order
+            originalQuantity: 1,
+            flavorOrderStatus: 'flavor_pending',
           },
         ];
       });
       return;
     }
 
-    if (newItem.category === "Refreshers" && !selectedSize) {
-      toast({
-        title: "Select size",
-        description: "Please select a size first",
-        variant: "destructive",
+    // Handle Refresher items
+    if (newItem.category === 'Refreshers') {
+      if (!selectedSize) {
+        toast({
+          title: 'Select size',
+          description: 'Please select a size first',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      const itemId = `${newItem.id}_${selectedSize.size}`;
+      const itemToAdd = {
+        ...newItem,
+        id: itemId,
+        price: selectedSize.price,
+        selectedSize: selectedSize.size,
+      };
+
+      setOrderItems((prevItems) => {
+        const existingItem = prevItems.find((item) => item.id === itemId);
+        if (existingItem) {
+          return prevItems.map((item) =>
+            item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item
+          );
+        }
+        return [...prevItems, { ...itemToAdd, quantity: 1 }];
       });
       return;
     }
 
-    const itemId =
-      newItem.category === "Refreshers"
-        ? `${newItem.id}_${selectedSize.size}`
-        : newItem.id;
-
-    // Normal handling for other items
-    const itemToAdd =
-      newItem.category === "Refreshers"
-        ? {
-            ...newItem,
-            id: itemId,
-            price: selectedSize.price,
-            selectedSize: selectedSize.size,
-          }
-        : newItem;
-
+    // Handle regular items
     setOrderItems((prevItems) => {
-      const existingItem = prevItems.find((item) => item.id === itemId);
+      const existingItem = prevItems.find((item) => item.id === newItem.id);
       if (existingItem) {
         return prevItems.map((item) =>
-          item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item
+          item.id === newItem.id
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
         );
       }
-      return [...prevItems, { ...itemToAdd, quantity: 1 }];
+      return [...prevItems, { ...newItem, quantity: 1 }];
     });
   };
 
@@ -438,7 +486,7 @@ const OrderMenu = () => {
     });
 
     // Only clear flavors if removing last Unliwings order
-    if (itemId === "unliwings" && getItemQuantity("unliwings") <= 1) {
+    if (itemId === 'unliwings' && getItemQuantity('unliwings') <= 1) {
       setSelectedFlavors([]);
     }
   };
@@ -467,11 +515,11 @@ const OrderMenu = () => {
       // Check if max flavors limit is reached
       if (currentFlavors.length >= (item?.maxFlavors || 0)) {
         toast({
-          title: "Max flavors reached",
+          title: 'Max flavors reached',
           description: `This item can only have ${item.maxFlavors} flavor${
-            item.maxFlavors > 1 ? "s" : ""
+            item.maxFlavors > 1 ? 's' : ''
           }`,
-          variant: "destructive",
+          variant: 'destructive',
         });
         return prev;
       }
@@ -498,65 +546,65 @@ const OrderMenu = () => {
 
   const submitOrder = async () => {
     try {
+      const cleanTableNumber = tableNumber?.replace('Table-', '');
+      if (!cleanTableNumber) {
+        toast({
+          title: 'Error',
+          description: 'Table number is required',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Prepare order items
       const orderWithFlavors = orderItems.map((item) => {
         if (item.isUnliwings) {
+          const isReorder = item.flavorHistory?.length > 0;
           return {
             ...item,
             selectedFlavors,
-            flavorHistory: item.flavorHistory
+            flavorHistory: isReorder
               ? [...item.flavorHistory, selectedFlavors]
-              : [selectedFlavors],
-            isReorder: item.flavorHistory?.length > 0,
+              : [],
+            originalQuantity: item.originalQuantity || item.quantity,
+            flavorOrderStatus: 'flavor_pending',
+            price: isReorder ? 0 : item.price, // Zero price for re-orders
+            total: isReorder ? 0 : item.price * item.originalQuantity,
           };
         }
         return {
           ...item,
           selectedFlavors: itemFlavors[item.id] || [],
+          total: item.price * item.quantity,
         };
       });
 
-      if (orderItems.length === 0) {
-        toast({
-          title: "Error",
-          description: "Please add items to your order",
-          variant: "destructive",
-        });
-        return;
-      }
+      const orderData = {
+        tableNumber: cleanTableNumber,
+        items: orderWithFlavors,
+        total: calculateTotal(orderWithFlavors),
+        status: 'pending',
+      };
 
-      let response;
-      if (location.state?.orderId) {
-        response = await updateOrder(location.state.orderId, orderWithFlavors);
-      } else {
-        response = await createOrder({
-          tableNumber,
-          items: orderWithFlavors,
-        });
-      }
-
-      if (!response._id) {
-        throw new Error(response.message || "Failed to create/update order");
-      }
+      const response = await createOrder(orderData);
+      if (!response._id) throw new Error('Failed to create order');
 
       dispatch({
-        type: "UPDATE_ITEMS",
+        type: 'UPDATE_ITEMS',
         tableNumber,
         items: response.items,
         orderId: response._id,
       });
 
-      navigate("/summary", {
-        state: {
-          tableNumber,
-          orderId: response._id,
-        },
+      navigate('/summary', {
+        state: { tableNumber, orderId: response._id },
       });
     } catch (error) {
-      console.error("Order submission error:", error);
+      console.error('Order submission error:', error);
       toast({
-        title: "Error",
-        description: error.message || "Failed to submit order",
-        variant: "destructive",
+        title: 'Error',
+        description: error.message || 'Failed to submit order',
+        variant: 'destructive',
       });
     }
   };
@@ -595,16 +643,16 @@ const OrderMenu = () => {
             {categories.map((category) => (
               <TabsContent key={category} value={category}>
                 {/* Unliwings flavor selection */}
-                {category === "Unliwings" && (
+                {category === 'Unliwings' && (
                   <div className="mb-8">
-                    {getItemQuantity("unliwings") > 0 && (
+                    {getItemQuantity('unliwings') > 0 && (
                       <>
                         <div className="flex justify-between items-center mb-4">
                           <h2 className="text-xl font-semibold">
                             Select Wing Flavors
-                            {getItemQuantity("unliwings") > 0 &&
-                              ` (${getItemQuantity("unliwings")} person${
-                                getItemQuantity("unliwings") > 1 ? "s" : ""
+                            {getItemQuantity('unliwings') > 0 &&
+                              ` (${getItemQuantity('unliwings')} person${
+                                getItemQuantity('unliwings') > 1 ? 's' : ''
                               })`}
                           </h2>
                           {unliwingsHistory.length > 0 && (
@@ -619,8 +667,8 @@ const OrderMenu = () => {
                               key={flavor}
                               variant={
                                 selectedFlavors.includes(flavor)
-                                  ? "default"
-                                  : "outline"
+                                  ? 'default'
+                                  : 'outline'
                               }
                               onClick={() => toggleFlavor(flavor)}
                               className="w-full"
@@ -639,7 +687,7 @@ const OrderMenu = () => {
                                 key={index}
                                 className="text-sm text-muted-foreground"
                               >
-                                Order #{index + 1}: {flavors.join(", ")}
+                                Order #{index + 1}: {flavors.join(', ')}
                               </div>
                             ))}
                           </div>
@@ -650,7 +698,7 @@ const OrderMenu = () => {
                 )}
 
                 {/* Refresher size selection */}
-                {category === "Refreshers" && selectedRefresher && (
+                {category === 'Refreshers' && selectedRefresher && (
                   <div className="mb-8">
                     <div className="flex justify-between items-center mb-4">
                       <h2 className="text-xl font-semibold">
@@ -723,7 +771,7 @@ const OrderMenu = () => {
                 )}
 
                 {/* Flavor selection for other items */}
-                {(category === "Ala Carte" || category === "Rice Meals") &&
+                {(category === 'Ala Carte' || category === 'Rice Meals') &&
                   orderItems
                     .filter(
                       (item) =>
@@ -746,8 +794,8 @@ const OrderMenu = () => {
                               key={`${item.id}_${flavor}`}
                               variant={
                                 (itemFlavors[item.id] || []).includes(flavor)
-                                  ? "default"
-                                  : "outline"
+                                  ? 'default'
+                                  : 'outline'
                               }
                               onClick={() => toggleItemFlavor(item.id, flavor)}
                               className="w-full"
@@ -769,6 +817,10 @@ const OrderMenu = () => {
                 {/* Menu items grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {menuByCategory[category].map((item) => {
+                    if (item.isUnliwings && hasActiveUnliwingsOrder) {
+                      return null;
+                    }
+
                     const quantity = getItemQuantity(item.id);
 
                     return (
@@ -795,7 +847,7 @@ const OrderMenu = () => {
                             </div>
 
                             <div className="mt-4">
-                              {item.category === "Refreshers" ? (
+                              {item.category === 'Refreshers' ? (
                                 <Button
                                   className="w-full"
                                   variant="outline"
@@ -854,7 +906,7 @@ const OrderMenu = () => {
               <ShoppingCart className="h-6 w-6 text-muted-foreground" />
               <div>
                 <p className="text-sm text-muted-foreground">
-                  {totalItems} item{totalItems > 1 ? "s" : ""}
+                  {totalItems} item{totalItems > 1 ? 's' : ''}
                 </p>
                 <p className="text-lg font-bold">₱{totalAmount.toFixed(2)}</p>
               </div>

@@ -1,19 +1,19 @@
-import { useLocation, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardHeader,
   CardContent,
   CardFooter,
-} from "@/components/ui/card";
-import { useToast } from "@/hooks/use-toast";
-import { useOrder } from "../../../context/orderContext";
-import { useState, useEffect } from "react";
-import { getOrder } from "@/services/api";
-import { motion } from "framer-motion";
-import { Loader2, Plus, Receipt, ArrowRight } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
+} from '@/components/ui/card';
+import { useToast } from '@/hooks/use-toast';
+import { useOrder } from '../../../context/orderContext';
+import { useState, useEffect } from 'react';
+import { getOrder } from '@/services/api';
+import { motion } from 'framer-motion';
+import { Loader2, Plus, Receipt, ArrowRight } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
 
 const OrderSummary = () => {
   const { toast } = useToast();
@@ -27,98 +27,97 @@ const OrderSummary = () => {
   const isUnliwingsItem = (item) => item.isUnliwings === true;
 
   useEffect(() => {
-    const fetchOrderDetails = async () => {
-      if (!orderId) return;
-      try {
-        setIsLoading(true);
-        const order = await getOrder(orderId);
+    console.log('OrderSummary mounted with:', {
+      orderId,
+      tableNumber,
+      newItems,
+    });
+    fetchOrderDetails();
+  }, [orderId]);
 
-        let mergedItems = order.items;
-        if (newItems?.length > 0) {
-          mergedItems = [...order.items];
+  const fetchOrderDetails = async () => {
+    if (!orderId) return;
+    try {
+      setIsLoading(true);
+      const order = await getOrder(orderId);
+      let mergedItems = [...order.items];
 
-          // Handle Unliwings separately
-          const newUnliwings = newItems.find(isUnliwingsItem);
-          const existingUnliwings = mergedItems.find(isUnliwingsItem);
+      if (newItems?.length > 0) {
+        const newUnliwings = newItems.find(isUnliwingsItem);
+        const existingUnliwings = mergedItems.find(isUnliwingsItem);
 
-          if (newUnliwings && existingUnliwings) {
-            // Update existing Unliwings with new flavors but keep original quantity
-            mergedItems = mergedItems.map((item) => {
-              if (item.isUnliwings) {
-                return {
-                  ...item,
-                  selectedFlavors: newUnliwings.selectedFlavors,
-                  flavorHistory: [
-                    ...(item.flavorHistory || []),
-                    newUnliwings.selectedFlavors,
-                  ],
-                  // Keep original quantity for pricing
-                  originalQuantity: item.originalQuantity || item.quantity,
-                };
+        // Handle Unliwings
+        if (newUnliwings && existingUnliwings) {
+          mergedItems = mergedItems.map((item) => {
+            if (item.isUnliwings) {
+              // Get current state
+              const currentFlavors = item.selectedFlavors || [];
+              const updatedHistory = [...(item.flavorHistory || [])];
+
+              // Add current flavors to history before updating
+              if (currentFlavors.length > 0) {
+                updatedHistory.push(currentFlavors);
               }
-              return item;
-            });
 
-            // Handle non-Unliwings items
-            const nonUnliwingsItems = newItems.filter(
-              (item) => !isUnliwingsItem(item)
-            );
-            nonUnliwingsItems.forEach((newItem) => {
-              const existingItem = mergedItems.find(
-                (item) => item.id === newItem.id && !isUnliwingsItem(item)
-              );
-              if (existingItem) {
-                existingItem.quantity += newItem.quantity;
-              } else {
-                mergedItems.push(newItem);
-              }
-            });
-          } else {
-            newItems.forEach((newItem) => {
-              if (isUnliwingsItem(newItem)) {
-                mergedItems.push({
-                  ...newItem,
-                  originalQuantity: newItem.quantity, // Store original quantity
-                });
-              } else {
-                const existingItem = mergedItems.find(
-                  (item) => item.id === newItem.id
-                );
-                if (existingItem) {
-                  existingItem.quantity += newItem.quantity;
-                } else {
-                  mergedItems.push(newItem);
-                }
-              }
-            });
-          }
+              // Update with new flavors
+              return {
+                ...item,
+                selectedFlavors: newUnliwings.selectedFlavors, // New flavors
+                flavorHistory: updatedHistory, // Updated history
+                originalQuantity: item.originalQuantity || item.quantity,
+                quantity: 1, // Reset for new order
+                flavorOrderStatus: 'flavor_pending',
+              };
+            }
+            return item;
+          });
+        } else if (newUnliwings) {
+          // New Unliwings order
+          mergedItems.push({
+            ...newUnliwings,
+            flavorHistory: [],
+            originalQuantity: newUnliwings.quantity,
+            quantity: newUnliwings.quantity,
+            flavorOrderStatus: 'flavor_pending',
+          });
         }
 
-        setOrderDetails({
-          ...order,
-          items: mergedItems,
+        // Handle other items
+        const otherItems = newItems.filter((item) => !isUnliwingsItem(item));
+        otherItems.forEach((newItem) => {
+          const existingItem = mergedItems.find(
+            (item) => item.id === newItem.id && !isUnliwingsItem(item)
+          );
+          if (existingItem) {
+            existingItem.quantity += newItem.quantity;
+          } else {
+            mergedItems.push(newItem);
+          }
         });
-
-        dispatch({
-          type: "UPDATE_ITEMS",
-          tableNumber,
-          items: mergedItems,
-          orderId: order._id,
-        });
-      } catch (error) {
-        console.error("Failed to fetch order:", error);
-        toast({
-          title: "Error",
-          description: "Failed to load order details",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
       }
-    };
 
-    fetchOrderDetails();
-  }, [orderId, newItems, tableNumber, dispatch]);
+      setOrderDetails({
+        ...order,
+        items: mergedItems,
+      });
+
+      dispatch({
+        type: 'UPDATE_ITEMS',
+        tableNumber,
+        items: mergedItems,
+        orderId: order._id,
+      });
+    } catch (error) {
+      console.error('Failed to fetch order:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load order details',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const accumulatedOrders =
     orderDetails?.items || state.orders[tableNumber] || [];
@@ -136,14 +135,14 @@ const OrderSummary = () => {
   const confirmOrder = () => {
     if (!orderId) {
       toast({
-        title: "Error",
-        description: "Order ID is missing",
-        variant: "destructive",
+        title: 'Error',
+        description: 'Order ID is missing',
+        variant: 'destructive',
       });
       return;
     }
 
-    navigate("/bill", {
+    navigate('/bill', {
       state: {
         orderItems: accumulatedOrders,
         tableNumber,
@@ -154,7 +153,7 @@ const OrderSummary = () => {
   };
 
   const handleAddMoreItems = () => {
-    navigate("/order", {
+    navigate('/order', {
       state: {
         tableNumber,
         orderId,
@@ -211,34 +210,32 @@ const OrderSummary = () => {
                             {item.name}
                             {item.isUnliwings && (
                               <span className="text-sm text-muted-foreground ml-2">
-                                ({item.originalQuantity || item.quantity}{" "}
+                                ({item.originalQuantity || item.quantity}{' '}
                                 {(item.originalQuantity || item.quantity) > 1
-                                  ? "persons"
-                                  : "person"}
+                                  ? 'persons'
+                                  : 'person'}
                                 )
                               </span>
                             )}
                           </h3>
                           <div className="flex items-center text-sm text-muted-foreground">
                             <span>
-                              ₱{item.price.toFixed(2)} ×{" "}
+                              ₱{item.price.toFixed(2)} ×{' '}
                               {item.isUnliwings
                                 ? item.originalQuantity || item.quantity
                                 : item.quantity}
                             </span>
                           </div>
                           {item.isUnliwings && (
-                            <>
-                              {item.selectedFlavors?.length > 0 && (
-                                <div className="text-sm text-muted-foreground mt-2">
-                                  <span className="font-medium">
-                                    Current Order:
-                                  </span>{" "}
-                                  {item.selectedFlavors.join(", ")}
-                                </div>
-                              )}
+                            <div className="space-y-2 mt-2">
+                              <div className="text-sm text-muted-foreground">
+                                <span className="font-medium">
+                                  Current Order:
+                                </span>{' '}
+                                {item.selectedFlavors?.join(', ')}
+                              </div>
                               {item.flavorHistory?.length > 0 && (
-                                <div className="text-sm space-y-1 mt-2">
+                                <div className="text-sm space-y-1">
                                   <span className="font-medium text-muted-foreground">
                                     Previous Orders:
                                   </span>
@@ -247,12 +244,12 @@ const OrderSummary = () => {
                                       key={idx}
                                       className="text-xs text-muted-foreground pl-2"
                                     >
-                                      #{idx + 1}: {flavors.join(", ")}
+                                      #{idx + 1}: {flavors.join(', ')}
                                     </div>
                                   ))}
                                 </div>
                               )}
-                            </>
+                            </div>
                           )}
                         </div>
                         <p className="font-medium">

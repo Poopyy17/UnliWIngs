@@ -1,10 +1,11 @@
-import { Schema, model } from "mongoose";
+import { Schema, model } from 'mongoose';
 
 const orderSchema = new Schema(
   {
     tableNumber: {
       type: String,
       required: true,
+      enum: ['1', '2', '3', '4'],
     },
     items: [
       {
@@ -20,7 +21,6 @@ const orderSchema = new Schema(
           type: Number,
           required: true,
         },
-        // Add new fields
         isUnliwings: {
           type: Boolean,
           default: false,
@@ -30,6 +30,23 @@ const orderSchema = new Schema(
         },
         selectedFlavors: [String],
         flavorHistory: [[String]], // Array of flavor arrays
+        flavorOrderStatus: {
+          type: String,
+          enum: ['flavor_pending', 'flavor_accepted', 'flavor_completed'],
+          default: 'flavor_pending',
+        },
+        flavorOrderStatuses: [
+          {
+            flavors: [String],
+            status: {
+              type: String,
+              enum: ['flavor_pending', 'flavor_accepted', 'flavor_completed'],
+              default: 'flavor_pending',
+            },
+            orderedAt: Date,
+            completedAt: Date,
+          },
+        ],
         category: String,
         description: String,
       },
@@ -40,8 +57,8 @@ const orderSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "preparing", "completed", "paid"],
-      default: "pending",
+      enum: ['pending', 'accepted', 'preparing', 'completed', 'paid'],
+      default: 'pending',
     },
     receiptNumber: {
       type: String,
@@ -55,7 +72,6 @@ const orderSchema = new Schema(
   { timestamps: true }
 );
 
-// Create sparse index for receiptNumber
 orderSchema.index({ receiptNumber: 1 }, { sparse: true });
 
-export default model("Order", orderSchema);
+export default model('Order', orderSchema);

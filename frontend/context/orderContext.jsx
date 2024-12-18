@@ -44,6 +44,14 @@ const orderReducer = (state, action) => {
         },
       };
 
+    case 'CLEAR_TABLE':
+      const { [action.tableNumber]: removedTable, ...remainingOrders } =
+        state.orders;
+      return {
+        ...state,
+        orders: remainingOrders,
+      };
+
     default:
       return state;
   }

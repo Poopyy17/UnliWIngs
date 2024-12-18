@@ -1,153 +1,165 @@
-import { Router } from "express";
+import { Router } from 'express';
 const router = Router();
-import Order from "../models/Order.js";
+import Order from '../models/Order.js';
+
+const VALID_STATUSES = [
+  'pending',
+  'accepted', // Add accepted status
+  'preparing',
+  'completed',
+  'paid',
+];
+
+const VALID_FLAVOR_STATUSES = [
+  'flavor_pending',
+  'flavor_accepted',
+  'flavor_completed',
+];
+const isUnliwingsItem = (item) => item.isUnliwings === true;
+
+const validateTableNumber = (req, res, next) => {
+  const { tableNumber } = req.body;
+  const cleanTableNumber = tableNumber.toString().replace('Table-', '');
+
+  if (!cleanTableNumber || !['1', '2', '3', '4'].includes(cleanTableNumber)) {
+    return res.status(400).json({ message: 'Invalid table number' });
+  }
+  req.body.tableNumber = cleanTableNumber;
+  next();
+};
 
 const generateReceiptNumber = () => {
   const timestamp = Date.now().toString();
   const random = Math.floor(Math.random() * 1000)
     .toString()
-    .padStart(3, "0");
+    .padStart(3, '0');
   return `R${timestamp.slice(-6)}${random}`;
 };
 
 const calculateTotal = (items) => {
   return items.reduce((sum, item) => {
     if (item.isUnliwings) {
+      // Always use originalQuantity for Unliwings pricing
       return sum + item.price * (item.originalQuantity || item.quantity);
     }
     return sum + item.price * item.quantity;
   }, 0);
 };
 
-const VALID_STATUSES = ["pending", "preparing", "completed", "paid"];
-const isUnliwingsItem = (item) => item.isUnliwings === true;
-
 // Create new order
-router.post("/", async (req, res) => {
+router.post('/', validateTableNumber, async (req, res) => {
   try {
-    const { tableNumber, items, orderId } = req.body;
+    const { tableNumber, items } = req.body;
+    console.log('Received order:', { tableNumber, itemCount: items.length });
 
-    let order;
-    if (orderId) {
-      // Find existing order
-      order = await Order.findById(orderId);
-      if (!order) {
-        return res.status(404).json({ message: "Order not found" });
-      }
+    const total = calculateTotal(items);
+    const order = new Order({
+      tableNumber,
+      items,
+      total,
+      status: 'pending',
+    });
 
-      // Separate Unliwings and regular items
-      const newUnliwingsItems = items.filter(isUnliwingsItem);
-      const newRegularItems = items.filter((item) => !isUnliwingsItem(item));
-
-      // Handle regular items
-      const updatedRegularItems = [
-        ...order.items.filter((item) => !isUnliwingsItem(item)),
-      ];
-      newRegularItems.forEach((newItem) => {
-        const existingItem = updatedRegularItems.find(
-          (item) => item.name === newItem.name
-        );
-        if (existingItem) {
-          existingItem.quantity += newItem.quantity;
-        } else {
-          updatedRegularItems.push(newItem);
-        }
-      });
-
-      // Handle Unliwings items
-      const existingUnliwings = order.items.find(isUnliwingsItem);
-      let updatedUnliwingsItems = [];
-
-      if (existingUnliwings && newUnliwingsItems.length > 0) {
-        // If Unliwings already exists, keep original quantity but update flavors
-        updatedUnliwingsItems = [
-          {
-            ...existingUnliwings,
-            selectedFlavors: newUnliwingsItems[0].selectedFlavors,
-          },
-        ];
-      } else if (newUnliwingsItems.length > 0) {
-        // If new Unliwings order
-        updatedUnliwingsItems = newUnliwingsItems;
-      } else if (existingUnliwings) {
-        // Keep existing Unliwings if no new ones
-        updatedUnliwingsItems = [existingUnliwings];
-      }
-
-      // Combine items and calculate total
-      const updatedItems = [...updatedRegularItems, ...updatedUnliwingsItems];
-      const total = calculateTotal(updatedItems);
-
-      order = await Order.findByIdAndUpdate(
-        orderId,
-        {
-          items: updatedItems,
-          total,
-        },
-        { new: true }
-      );
-    } else {
-      // Create new order - no changes needed for initial order
-      const total = calculateTotal(items);
-
-      order = new Order({
-        tableNumber,
-        items,
-        total,
-        status: "pending",
-      });
-
-      order = await order.save();
-    }
-
+    console.log('Creating order:', order);
+    await order.save();
     res.status(201).json(order);
   } catch (error) {
+    console.error('Error creating order:', error);
     res.status(400).json({ message: error.message });
   }
 });
 
-// Generate receipt
-router.post("/:id/receipt", async (req, res) => {
+// Update receipt generation route
+router.post('/receipt', async (req, res) => {
   try {
-    const orderId = req.params.id;
+    const { tableNumber } = req.body;
     const receiptNumber = generateReceiptNumber();
 
-    const updatedOrder = await Order.findByIdAndUpdate(
-      orderId,
-      {
-        receiptNumber,
-        status: "completed",
-        receiptGeneratedAt: new Date(),
-      },
-      { new: true }
-    );
+    console.log('Generating receipt for table:', tableNumber);
 
-    if (!updatedOrder) {
-      return res.status(404).json({ message: "Order not found" });
+    // Find all active orders for the table
+    const tableOrders = await Order.find({
+      tableNumber: tableNumber.toString(),
+      status: { $nin: ['completed', 'paid'] },
+    });
+
+    console.log('Found table orders:', tableOrders);
+
+    if (!tableOrders.length) {
+      return res
+        .status(404)
+        .json({ message: 'No active orders found for table' });
     }
 
-    res.json({ receiptNumber: updatedOrder.receiptNumber });
+    // Update all orders with receipt number and mark as completed
+    const updatePromises = tableOrders.map((order) =>
+      Order.findByIdAndUpdate(
+        order._id,
+        {
+          receiptNumber,
+          status: 'completed',
+          receiptGeneratedAt: new Date(),
+        },
+        { new: true }
+      )
+    );
+
+    await Promise.all(updatePromises);
+
+    res.json({
+      receiptNumber,
+      ordersCompleted: tableOrders.length,
+    });
   } catch (error) {
-    res.status(500).json({ error: "Failed to generate receipt" });
+    console.error('Receipt generation error:', error);
+    res.status(500).json({ message: error.message });
   }
 });
 
 // Get all orders
-router.get("/", async (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const orders = await Order.find().sort({ createdAt: -1 });
+    console.log('Fetching all orders...');
+
+    const orders = await Order.find().sort({ createdAt: -1 }).lean().exec();
+
+    // Enhanced logging
+    console.log('Orders by table:');
+    orders.forEach((order) => {
+      console.log(`Table ${order.tableNumber}:`, {
+        id: order._id,
+        status: order.status,
+        items: order.items.length,
+      });
+    });
+
+    // Group active orders by table
+    const activeOrders = orders.filter((order) =>
+      ['pending', 'accepted', 'preparing'].includes(order.status)
+    );
+
+    console.log(
+      'Active orders by table:',
+      activeOrders.reduce((acc, order) => {
+        acc[order.tableNumber] = acc[order.tableNumber] || [];
+        acc[order.tableNumber].push(order);
+        return acc;
+      }, {})
+    );
+
     res.json(orders);
   } catch (error) {
+    console.error('Error fetching orders:', error);
     res.status(500).json({ message: error.message });
   }
 });
 
 // Get single orders
-router.get("/:id", async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ message: 'Order not found' });
     }
     res.json(order);
   } catch (error) {
@@ -155,18 +167,18 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.patch("/:id", async (req, res) => {
+router.patch('/:id', async (req, res) => {
   try {
     const { items, action } = req.body;
     const orderId = req.params.id;
 
     const order = await Order.findById(orderId);
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ message: 'Order not found' });
     }
 
     let updatedItems;
-    if (action === "add") {
+    if (action === 'add') {
       const newUnliwingsItems = items.filter(isUnliwingsItem);
       const newRegularItems = items.filter((item) => !isUnliwingsItem(item));
 
@@ -176,7 +188,7 @@ router.patch("/:id", async (req, res) => {
       ];
       newRegularItems.forEach((newItem) => {
         const existingItem = updatedRegularItems.find(
-          (item) => item.name === newItem.name
+          (item) => item.id === newItem.id
         );
         if (existingItem) {
           existingItem.quantity += newItem.quantity;
@@ -190,23 +202,46 @@ router.patch("/:id", async (req, res) => {
       let updatedUnliwingsItems = [];
 
       if (existingUnliwings && newUnliwingsItems.length > 0) {
+        // This is a reorder
         updatedUnliwingsItems = [
           {
             ...existingUnliwings,
             selectedFlavors: newUnliwingsItems[0].selectedFlavors,
             flavorHistory: [
               ...(existingUnliwings.flavorHistory || []),
-              newUnliwingsItems[0].selectedFlavors,
+              existingUnliwings.selectedFlavors,
+            ],
+            flavorOrderStatus: 'flavor_pending',
+            flavorOrderStatuses: [
+              ...(existingUnliwings.flavorOrderStatuses || []),
+              {
+                flavors: existingUnliwings.selectedFlavors,
+                status: 'flavor_completed',
+                orderedAt: existingUnliwings.createdAt,
+                completedAt: new Date(),
+              },
             ],
             originalQuantity:
               existingUnliwings.originalQuantity || existingUnliwings.quantity,
+            quantity: 1,
           },
         ];
       } else if (newUnliwingsItems.length > 0) {
+        // This is a new Unliwings order
         updatedUnliwingsItems = newUnliwingsItems.map((item) => ({
           ...item,
           originalQuantity: item.quantity,
-          flavorHistory: [item.selectedFlavors],
+          flavorHistory: [],
+          flavorOrderStatus: 'flavor_pending',
+          flavorOrderStatuses: [
+            {
+              flavors: item.selectedFlavors,
+              status: 'flavor_pending',
+              orderedAt: new Date(),
+              completedAt: null,
+            },
+          ],
+          orderedAt: new Date(),
         }));
       }
 
@@ -233,40 +268,105 @@ router.patch("/:id", async (req, res) => {
 });
 
 // Update order status
-router.patch("/:id/status", async (req, res) => {
+router.patch('/:id/status', async (req, res) => {
   try {
-    const { status } = req.body;
+    const { status, updateType } = req.body;
+    const orderId = req.params.id;
 
-    if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ message: "Invalid status" });
+    const order = await Order.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
     }
 
-    const order = await Order.findByIdAndUpdate(
-      req.params.id,
-      {
+    let updateData = {};
+
+    // Handle both order status and flavor status
+    if (updateType === 'both') {
+      updateData = {
+        status,
+        items: order.items.map((item) => {
+          if (item.isUnliwings && item.flavorOrderStatus === 'flavor_pending') {
+            return {
+              ...item,
+              flavorOrderStatus: 'flavor_accepted',
+            };
+          }
+          return item;
+        }),
+        updatedAt: new Date(),
+      };
+    } else {
+      updateData = {
         status,
         updatedAt: new Date(),
-      },
+      };
+    }
+
+    const updatedOrder = await Order.findByIdAndUpdate(orderId, updateData, {
+      new: true,
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+});
+
+router.patch('/:id/flavor-status', async (req, res) => {
+  try {
+    const { itemId, status } = req.body;
+
+    if (!VALID_FLAVOR_STATUSES.includes(status)) {
+      return res.status(400).json({ message: 'Invalid flavor status' });
+    }
+
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+
+    const updatedItems = order.items.map((item) => {
+      if (item._id.toString() === itemId && item.isUnliwings) {
+        const currentStatus =
+          item.flavorOrderStatuses[item.flavorOrderStatuses.length - 1];
+        return {
+          ...item,
+          flavorOrderStatus: status,
+          flavorOrderStatuses: [
+            ...item.flavorOrderStatuses.slice(0, -1),
+            {
+              ...currentStatus,
+              status,
+              completedAt:
+                status === 'flavor_completed'
+                  ? new Date()
+                  : currentStatus.completedAt,
+            },
+          ],
+        };
+      }
+      return item;
+    });
+
+    const updatedOrder = await Order.findByIdAndUpdate(
+      req.params.id,
+      { items: updatedItems },
       { new: true }
     );
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-
-    res.json(order);
+    res.json(updatedOrder);
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 });
 
 // Mark order as paid
-router.patch("/:id/pay", async (req, res) => {
+router.patch('/:id/pay', async (req, res) => {
   try {
     const order = await Order.findByIdAndUpdate(
       req.params.id,
       {
-        status: "paid",
+        status: 'paid',
         isPaid: true,
         paidAt: new Date(),
       },
@@ -274,7 +374,7 @@ router.patch("/:id/pay", async (req, res) => {
     );
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({ message: 'Order not found' });
     }
 
     res.json(order);
