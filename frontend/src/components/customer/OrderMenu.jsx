@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { createOrder, updateOrder } from '@/services/api';
+import { createOrder } from '@/services/api';
 import { useOrder } from '../../../context/orderContext';
 import { motion } from 'framer-motion';
 import { MinusCircle, PlusCircle, ShoppingCart } from 'lucide-react';
@@ -328,13 +328,21 @@ const OrderMenu = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { dispatch } = useOrder();
+  const [tableNumber, setTableNumber] = useState(location.state?.tableNumber);
   const [orderItems, setOrderItems] = useState([]);
   const [selectedFlavors, setSelectedFlavors] = useState([]);
   const [itemFlavors, setItemFlavors] = useState({});
   const [selectedSizes, setSelectedSizes] = useState({});
   const [selectedRefresher, setSelectedRefresher] = useState(null);
+  const [hasUnliwings, setHasUnliwings] = useState(false);
+  const [hasInitialUnliwings, setHasInitialUnliwings] = useState(false);
   const [unliwingsHistory, setUnliwingsHistory] = useState([]);
-  const tableNumber = location.state?.tableNumber;
+  const [orderSequence, setOrderSequence] = useState(1);
+
+  const ORDER_TYPE = {
+    PREPARING: 'preparing',
+    ACCEPTED: 'accepted',
+  };
 
   const categories = [...new Set(MOCK_MENU.map((item) => item.category))];
 
@@ -348,14 +356,16 @@ const OrderMenu = () => {
   }, {});
 
   const calculateTotal = (items) => {
-    return items.reduce((sum, item) => {
-      if (item.isUnliwings) {
-        // Only charge for initial order
-        return item.flavorHistory?.length > 0
-          ? sum
-          : sum + item.price * item.originalQuantity;
+    const hasExistingUnliwings = location.state?.currentItems?.some(
+      (item) => item.isUnliwings && item.orderSequence === 1
+    );
+
+    return items.reduce((total, item) => {
+      // Only make reorders free if initial order exists
+      if (item.isUnliwings && hasExistingUnliwings && item.orderSequence > 1) {
+        return total;
       }
-      return sum + item.price * item.quantity;
+      return total + item.price * item.quantity;
     }, 0);
   };
 
@@ -364,114 +374,52 @@ const OrderMenu = () => {
   );
 
   useEffect(() => {
-    // Load existing order items from location state if available
+    if (!tableNumber && location.state?.tableNumber) {
+      setTableNumber(location.state.tableNumber);
+    }
+  }, [location.state]);
+
+  useEffect(() => {
     if (location.state?.currentItems) {
       const currentItems = location.state.currentItems;
       const unliwingsItem = currentItems.find((item) => item.isUnliwings);
 
       if (unliwingsItem) {
-        // If this is a reorder, only keep the Unliwings item
-        if (unliwingsItem.flavorHistory?.length > 0) {
+        // Fix: Use exact sequence from existing order
+        setOrderSequence(unliwingsItem.orderSequence + 1);
+        setUnliwingsHistory(unliwingsItem.flavorHistory || []);
+
+        if (unliwingsItem.flavorOrderStatus === 'flavor_pending') {
           setOrderItems([
             {
               ...unliwingsItem,
-              selectedFlavors: [], // Clear for new selection
-              flavorOrderStatus: 'flavor_pending',
+              selectedFlavors: [],
+              flavorHistory: unliwingsItem.flavorHistory || [],
+              orderSequence: unliwingsItem.orderSequence + 1,
             },
-          ]); // Only keep Unliwings
-          setSelectedFlavors([]);
-          setUnliwingsHistory(unliwingsItem.flavorHistory || []);
-        } else {
-          // First order - keep existing state
-          setOrderItems(currentItems);
-          setSelectedFlavors(unliwingsItem.selectedFlavors || []);
-          setUnliwingsHistory([]);
+          ]);
         }
-      } else {
-        // No Unliwings - start fresh
-        setOrderItems([]);
       }
     }
   }, [location.state]);
+
   const addToOrder = (newItem, selectedSize = null) => {
-    // Handle Unliwings items
     if (newItem.isUnliwings) {
-      setOrderItems((prevItems) => {
-        const existingUnliwings = prevItems.find((item) => item.isUnliwings);
-
-        if (existingUnliwings) {
-          if (existingUnliwings.flavorHistory?.length > 0) {
-            // Re-order: preserve original quantity and update history
-            return prevItems.map((item) =>
-              item.isUnliwings
-                ? {
-                    ...item,
-                    selectedFlavors: [],
-                    flavorHistory: [
-                      ...(item.flavorHistory || []),
-                      item.selectedFlavors,
-                    ],
-                    flavorOrderStatus: 'flavor_pending',
-                  }
-                : item
-            );
-          } else {
-            // Initial order: allow quantity increase
-            return prevItems.map((item) =>
-              item.isUnliwings
-                ? {
-                    ...item,
-                    quantity: item.quantity + 1,
-                    originalQuantity: item.quantity + 1,
-                  }
-                : item
-            );
-          }
-        }
-
-        // New Unliwings order
-        return [
-          ...prevItems,
-          {
-            ...newItem,
-            quantity: 1,
-            selectedFlavors: [],
-            flavorHistory: [],
-            originalQuantity: 1,
-            flavorOrderStatus: 'flavor_pending',
-          },
-        ];
-      });
-      return;
-    }
-
-    // Handle Refresher items
-    if (newItem.category === 'Refreshers') {
-      if (!selectedSize) {
-        toast({
-          title: 'Select size',
-          description: 'Please select a size first',
-          variant: 'destructive',
-        });
-        return;
+      // Check if table already has Unliwings
+      if (location.state?.currentItems?.some((item) => item.isUnliwings)) {
+        setHasUnliwings(true);
       }
 
-      const itemId = `${newItem.id}_${selectedSize.size}`;
-      const itemToAdd = {
-        ...newItem,
-        id: itemId,
-        price: selectedSize.price,
-        selectedSize: selectedSize.size,
-      };
-
       setOrderItems((prevItems) => {
-        const existingItem = prevItems.find((item) => item.id === itemId);
-        if (existingItem) {
-          return prevItems.map((item) =>
-            item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item
-          );
-        }
-        return [...prevItems, { ...itemToAdd, quantity: 1 }];
+        const newUnliwingsItem = {
+          ...newItem,
+          quantity: 1,
+          selectedFlavors: [],
+          status: 'preparing',
+          orderTotal: newItem.price,
+        };
+
+        return [...prevItems, newUnliwingsItem];
       });
       return;
     }
@@ -482,11 +430,23 @@ const OrderMenu = () => {
       if (existingItem) {
         return prevItems.map((item) =>
           item.id === newItem.id
-            ? { ...item, quantity: item.quantity + 1 }
+            ? {
+                ...item,
+                quantity: item.quantity + 1,
+                orderTotal: (item.quantity + 1) * item.price,
+              }
             : item
         );
       }
-      return [...prevItems, { ...newItem, quantity: 1 }];
+      return [
+        ...prevItems,
+        {
+          ...newItem,
+          quantity: 1,
+          status: 'preparing',
+          orderTotal: newItem.price,
+        },
+      ];
     });
   };
 
@@ -560,89 +520,101 @@ const OrderMenu = () => {
     return item ? item.quantity : 0;
   };
 
-  // Update submitOrder function
   const submitOrder = async () => {
     try {
-      const cleanTableNumber = tableNumber?.replace('Table-', '');
-      if (!cleanTableNumber) {
+      if (!tableNumber) {
         toast({
           title: 'Error',
-          description: 'Table number is required',
+          description: 'Please select a table first',
+          variant: 'destructive',
+        });
+        navigate('/');
+        return;
+      }
+
+      const cleanTableNumber = tableNumber.toString().replace('Table-', '');
+
+      // Validate flavors
+      const hasUnselectedFlavors = orderItems.some(
+        (item) =>
+          (item.isUnliwings && selectedFlavors.length === 0) ||
+          (item.maxFlavors > 0 &&
+            (!itemFlavors[item.id] || itemFlavors[item.id].length === 0))
+      );
+
+      if (hasUnselectedFlavors) {
+        toast({
+          title: 'Error',
+          description: 'Please select flavors for all items',
           variant: 'destructive',
         });
         return;
       }
 
-      const existingUnliwings = orderItems.find(
-        (item) => item.isUnliwings && item.flavorHistory?.length > 0
+      // Process items with new structure
+      const processedItems = orderItems.map((item) => ({
+        ...item,
+        selectedFlavors: item.isUnliwings
+          ? selectedFlavors
+          : itemFlavors[item.id] || [],
+        status: 'preparing',
+        orderTotal: item.quantity * item.price,
+        orderSequence: item.isUnliwings ? orderSequence : null,
+        flavorOrderStatus: item.isUnliwings ? 'flavor_pending' : null,
+        flavorHistory: item.isUnliwings
+          ? [...unliwingsHistory, selectedFlavors]
+          : null,
+      }));
+
+      const isInitialUnliwings = processedItems.some(
+        (item) => item.isUnliwings && item.orderSequence === 1
       );
-
-      const orderWithFlavors = orderItems.map((item) => {
-        if (item.isUnliwings) {
-          const isReorder = item.flavorHistory?.length > 0;
-          return {
-            ...item,
-            selectedFlavors,
-            flavorHistory: isReorder
-              ? [...item.flavorHistory, selectedFlavors]
-              : [],
-            originalQuantity: item.originalQuantity || item.quantity,
-            flavorOrderStatus: 'flavor_pending',
-            status: 'pending',
-            price: item.price,
-            originalOrderId: location.state?.orderId, // Add reference to original order
-          };
-        }
-
-        return {
-          ...item,
-          selectedFlavors: itemFlavors[item.id] || [],
-          total: item.price * item.quantity,
-          status: 'pending',
-          originalOrderId: location.state?.orderId, // Add reference to original order
-        };
-      });
 
       const orderData = {
         tableNumber: cleanTableNumber,
-        items: orderWithFlavors,
-        total: calculateTotal(orderWithFlavors),
-        status: 'pending',
-        isPaid: false,
-        receiptNumber: null,
-        originalOrderId: location.state?.orderId, // Add reference to original order
+        items: processedItems,
+        status: 'preparing',
+        isTableOccupied: true,
+        hasUnliwings: processedItems.some((item) => item.isUnliwings),
+        hasInitialUnliwings: isInitialUnliwings,
+        orderNumber: Date.now(),
+        grandTotal: calculateTotal(processedItems),
       };
 
       const response = await createOrder(orderData);
-      if (!response._id) throw new Error('Failed to create order');
 
-      // Update order context with only the new items
-      dispatch({
-        type: 'UPDATE_ITEMS',
-        tableNumber,
-        items: response.items,
-        orderId: response._id,
-        status: response.status,
-        isPaid: response.isPaid,
-      });
-
-      navigate('/summary', {
-        state: {
-          tableNumber,
-          orderId: response._id,
-          items: response.items,
-          status: response.status,
-        },
-      });
+      if (response) {
+        navigate('/summary', {
+          state: {
+            tableNumber,
+            orderId: response._id,
+            orders: response.orders,
+            orderNumber: response.orderNumber,
+          },
+        });
+      }
     } catch (error) {
       console.error('Order submission error:', error);
       toast({
-        title: 'Error',
-        description: error.message || 'Failed to submit order',
+        title: 'Order Failed',
+        description: error.message || 'Failed to process order',
         variant: 'destructive',
       });
     }
   };
+
+  useEffect(() => {
+    if (location.state?.currentItems) {
+      const currentItems = location.state.currentItems;
+      const unliwingsItem = currentItems.find((item) => item.isUnliwings);
+
+      if (unliwingsItem) {
+        setOrderSequence(unliwingsItem.orderSequence + 1);
+        setUnliwingsHistory(unliwingsItem.flavorHistory || []);
+        setHasUnliwings(true);
+      }
+    }
+  }, [location.state]);
 
   const totalItems = orderItems.reduce((sum, item) => sum + item.quantity, 0);
   const totalAmount = orderItems.reduce(
@@ -650,9 +622,123 @@ const OrderMenu = () => {
     0
   );
 
+  const OrderCard = ({ item, quantity }) => (
+    <Card className="overflow-hidden hover:shadow-md transition-shadow">
+      <CardContent className="p-4">
+        <div className="flex justify-between items-start">
+          <div>
+            <h3 className="font-semibold">{item.name}</h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              {item.description}
+            </p>
+          </div>
+          <span className="font-semibold">₱{item.price?.toFixed(2)}</span>
+        </div>
+
+        <div className="mt-4 flex justify-end">
+          {quantity > 0 ? (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => removeFromOrder(item.id)}
+              >
+                <MinusCircle className="h-4 w-4" />
+              </Button>
+              <span className="font-medium w-8 text-center">{quantity}</span>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => addToOrder(item)}
+              >
+                <PlusCircle className="h-4 w-4" />
+              </Button>
+            </div>
+          ) : (
+            <Button
+              className="w-full"
+              variant="outline"
+              onClick={() => addToOrder(item)}
+            >
+              Add to Order
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  // 4. Updated Flavor Selection Component
+  const FlavorSelector = ({ item, selectedFlavors, onFlavorToggle }) => (
+    <div className="mb-8">
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-semibold">
+          Select flavors for {item.name} ({item.quantity}x)
+        </h2>
+        <span className="text-sm text-muted-foreground">
+          ({selectedFlavors.length}/{item.maxFlavors} flavors)
+        </span>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+        {WING_FLAVORS.map((flavor) => (
+          <Button
+            key={flavor}
+            variant={selectedFlavors.includes(flavor) ? 'default' : 'outline'}
+            onClick={() => onFlavorToggle(flavor)}
+            className="w-full"
+            disabled={
+              !selectedFlavors.includes(flavor) &&
+              selectedFlavors.length >= item.maxFlavors
+            }
+          >
+            {flavor}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+
+  // 5. Updated Cart Display
+  const CartDisplay = () => (
+    <div className="fixed bottom-5 left-1/2 transform -translate-x-1/2 w-11/12 max-w-4xl">
+      <Card className="p-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-4">
+            <ShoppingCart className="h-6 w-6 text-muted-foreground" />
+            <div>
+              <p className="text-sm text-muted-foreground">
+                {totalItems} item{totalItems !== 1 ? 's' : ''}
+              </p>
+              <p className="text-lg font-bold">
+                ₱{calculateTotal(orderItems).toFixed(2)}
+                {location.state?.currentItems?.some(
+                  (item) => item.isUnliwings && item.orderSequence === 1
+                ) &&
+                  orderItems.some((item) => item.isUnliwings) && (
+                    <span className="text-sm text-green-600 ml-2">
+                      (Unliwings Free)
+                    </span>
+                  )}
+              </p>
+            </div>
+          </div>
+          <Button
+            onClick={submitOrder}
+            disabled={orderItems.length === 0}
+            className="flex items-center gap-2"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            Submit Order
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="container mx-auto px-4 py-6 pb-32">
+        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Menu</h1>
@@ -941,23 +1027,7 @@ const OrderMenu = () => {
           </Tabs>
         </ScrollArea>
 
-        <div className="fixed bottom-5 left-1/2 transform -translate-x-1/2 w-11/12 max-w-4xl bg-white shadow-lg p-4 rounded-md">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <ShoppingCart className="h-6 w-6 text-muted-foreground" />
-              <div>
-                <p className="text-sm text-muted-foreground">
-                  {totalItems} item{totalItems > 1 ? 's' : ''}
-                </p>
-                <p className="text-lg font-bold">₱{totalAmount.toFixed(2)}</p>
-              </div>
-            </div>
-            <Button onClick={submitOrder} className="flex items-center gap-2">
-              <ShoppingCart className="h-4 w-4" />
-              Submit Order
-            </Button>
-          </div>
-        </div>
+        <CartDisplay />
       </div>
     </div>
   );

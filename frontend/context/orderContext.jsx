@@ -20,11 +20,18 @@ const orderReducer = (state, action) => {
         if (existingItem) {
           return acc.map((item) =>
             item.name === newItem.name
-              ? { ...item, quantity: item.quantity + newItem.quantity }
+              ? {
+                  ...item,
+                  quantity: item.quantity + newItem.quantity,
+                  orderTotal: (item.quantity + newItem.quantity) * item.price,
+                }
               : item
           );
         }
-        return [...acc, newItem];
+        return [
+          ...acc,
+          { ...newItem, orderTotal: newItem.quantity * newItem.price },
+        ];
       }, existingOrders);
 
       return {
@@ -32,6 +39,51 @@ const orderReducer = (state, action) => {
         orders: {
           ...state.orders,
           [action.tableNumber]: mergedItems,
+        },
+      };
+
+    case 'UPDATE_FLAVOR_STATUS':
+      return {
+        ...state,
+        orders: {
+          ...state.orders,
+          [action.tableNumber]: state.orders[action.tableNumber].map((item) =>
+            item.orderNumber === action.orderNumber
+              ? { ...item, flavorOrderStatus: action.status }
+              : item
+          ),
+        },
+      };
+
+    case 'UPDATE_ORDER_SEQUENCE':
+      return {
+        ...state,
+        orders: {
+          ...state.orders,
+          [action.tableNumber]: state.orders[action.tableNumber].map((item) =>
+            item.isUnliwings
+              ? { ...item, orderSequence: action.sequence }
+              : item
+          ),
+        },
+      };
+
+    case 'UPDATE_FLAVOR_HISTORY':
+      return {
+        ...state,
+        orders: {
+          ...state.orders,
+          [action.tableNumber]: state.orders[action.tableNumber].map((item) =>
+            item.isUnliwings
+              ? {
+                  ...item,
+                  flavorHistory: [
+                    ...(item.flavorHistory || []),
+                    action.flavors,
+                  ],
+                }
+              : item
+          ),
         },
       };
 
@@ -58,7 +110,9 @@ const orderReducer = (state, action) => {
 };
 
 export const OrderProvider = ({ children }) => {
-  const [state, dispatch] = useReducer(orderReducer, { orders: {} });
+  const [state, dispatch] = useReducer(orderReducer, {
+    orders: {},
+  });
 
   return (
     <OrderContext.Provider value={{ state, dispatch }}>

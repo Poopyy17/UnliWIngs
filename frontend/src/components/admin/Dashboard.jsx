@@ -31,36 +31,17 @@ import {
 import OrdersList from './OrdersList';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { v4 as uuidv4 } from 'uuid';
 
 const Dashboard = () => {
   const { toast } = useToast();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedItems, setExpandedItems] = useState({});
 
-  const isUnliwingsItem = (item) => item.isUnliwings === true;
-
-  const calculateTableTotal = (orders) => {
-    return orders.reduce((sum, order) => {
-      const orderTotal = order.items.reduce((itemSum, item) => {
-        // Skip items from different orders
-        if (
-          !item.isUnliwings &&
-          item.originalOrderId &&
-          item.originalOrderId !== order._id
-        ) {
-          return itemSum;
-        }
-
-        if (item.isUnliwings) {
-          return item.flavorHistory?.length > 0
-            ? itemSum
-            : itemSum + item.price * (item.originalQuantity || item.quantity);
-        }
-
-        return itemSum + item.price * item.quantity;
-      }, 0);
-      return sum + orderTotal;
-    }, 0);
+  const OrderStatus = {
+    PREPARING: 'preparing',
+    ACCEPTED: 'accepted',
   };
 
   useEffect(() => {
@@ -84,8 +65,8 @@ const Dashboard = () => {
     }
   };
 
-  const activeOrders = orders.filter((order) =>
-    ['pending', 'accepted', 'preparing'].includes(order.status)
+  const activeOrders = orders.filter(
+    (order) => !order.isPaid && order.isTableOccupied
   );
 
   const todaysRevenue = orders
@@ -94,105 +75,73 @@ const Dashboard = () => {
       const today = new Date();
       return orderDate.toDateString() === today.toDateString() && order.isPaid;
     })
-    .reduce((sum, order) => sum + order.total, 0);
+    .reduce((sum, order) => sum + order.grandTotal, 0);
 
   const totalOrders = orders.length;
-  const completedOrders = orders.filter(
-    (order) => order.status === 'completed'
-  ).length;
+  const completedOrders = orders.filter((order) => order.isPaid).length;
 
-  const calculateTotal = (items) => {
-    return items.reduce((sum, item) => {
-      if (item.isUnliwings) {
-        // Only charge for initial order based on original quantity
-        const isReorder = item.flavorHistory?.length > 0;
-        return isReorder ? sum : sum + item.price * item.originalQuantity;
-      }
-      return sum + item.price * item.quantity;
-    }, 0);
-  };
-
-  const handleStatusUpdate = async (orderId, newStatus) => {
+  const handleStatusUpdate = async (
+    tableNumber,
+    orderNumber,
+    itemId,
+    newStatus
+  ) => {
     try {
-      const updatedOrder = await updateOrderStatus(orderId, newStatus);
+      await updateOrderStatus(tableNumber, orderNumber, itemId, newStatus);
 
-      // Update orders state and move to correct tab
-      setOrders((prevOrders) =>
-        prevOrders.map((order) => {
-          if (order._id === orderId) {
+      setOrders((prevOrders) => {
+        return prevOrders.map((tableOrder) => {
+          if (tableOrder.tableNumber === parseInt(tableNumber)) {
             return {
-              ...updatedOrder,
-              total: calculateTotal(updatedOrder.items), // Recalculate total
+              ...tableOrder,
+              orders: tableOrder.orders.map((order) => {
+                if (order.orderNumber === orderNumber) {
+                  return {
+                    ...order,
+                    items: order.items.map((item) => {
+                      if (item._id === itemId) {
+                        return { ...item, status: newStatus };
+                      }
+                      return item;
+                    }),
+                  };
+                }
+                return order;
+              }),
             };
           }
-          return order;
-        })
-      );
-
-      await fetchOrders(); // Refresh orders list
+          return tableOrder;
+        });
+      });
 
       toast({
         title: 'Status Updated',
-        description: `Order status changed to ${newStatus}`,
+        description: `Item status changed to ${newStatus}`,
       });
     } catch (error) {
+      console.error('Status update error:', error);
       toast({
         title: 'Error',
-        description: 'Failed to update order status',
+        description: 'Failed to update item status',
         variant: 'destructive',
       });
     }
   };
 
-  const groupOrdersById = (items) => {
-    return items.reduce((acc, item) => {
-      const orderId = item.orderId;
-      if (!acc[orderId]) {
-        acc[orderId] = [];
-      }
-      acc[orderId].push(item);
-      return acc;
-    }, {});
-  };
-
-  const groupOrdersForPayment = (orders) => {
-    if (!Array.isArray(orders)) {
-      console.log('Orders is not an array:', orders);
-      return [];
-    }
-
-    const groupedByTable = orders.reduce((acc, order) => {
-      if (!order?.tableNumber) return acc;
-
-      const key = order.tableNumber.toString();
-      if (!acc[key]) {
-        acc[key] = {
-          tableNumber: key,
-          orders: [],
-          total: 0,
-          receiptNumber: order.receiptNumber,
-        };
-      }
-      acc[key].orders.push(order);
-      acc[key].total += calculateTotal(order.items || []);
-      return acc;
-    }, {});
-
-    return Object.values(groupedByTable);
-  };
-
   const handleTablePayment = async (tableNumber) => {
     try {
-      await processTablePayment(tableNumber);
-      await fetchOrders(); // Refresh orders
+      const result = await processTablePayment(tableNumber);
+      await fetchOrders();
       toast({
         title: 'Payment Processed',
-        description: `All orders for Table ${tableNumber} have been paid`,
+        description: `Receipt #${
+          result.receiptNumber
+        } - Total: ₱${result.grandTotal.toFixed(2)}`,
       });
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to process table payment',
+        description: 'Failed to process payment',
         variant: 'destructive',
       });
     }
@@ -212,32 +161,15 @@ const Dashboard = () => {
 
   const groupOrdersByTable = (orders) => {
     const tables = {
-      1: [],
-      2: [],
-      3: [],
-      4: [],
+      1: null,
+      2: null,
+      3: null,
+      4: null,
     };
 
-    orders.forEach((order) => {
-      if (order.tableNumber && order.status !== 'completed') {
-        const tableNum = order.tableNumber.toString().replace('Table-', '');
-
-        if (!tables.hasOwnProperty(tableNum)) {
-          console.warn(`Invalid table number: ${tableNum}`);
-          return;
-        }
-
-        const hasPendingReorders = order.items.some(
-          (item) =>
-            item.isUnliwings && item.flavorOrderStatus === 'flavor_pending'
-        );
-
-        if (
-          ['pending', 'accepted', 'preparing'].includes(order.status) ||
-          hasPendingReorders
-        ) {
-          tables[tableNum].push(order);
-        }
+    orders.forEach((tableOrder) => {
+      if (tableOrder.tableNumber) {
+        tables[tableOrder.tableNumber] = tableOrder;
       }
     });
 
@@ -246,7 +178,7 @@ const Dashboard = () => {
 
   const StatusIcon = ({ status }) => {
     switch (status) {
-      case 'completed':
+      case 'accepted':
         return <CheckCircle2 className="h-5 w-5 text-green-500" />;
       case 'preparing':
         return <Clock className="h-5 w-5 text-yellow-500" />;
@@ -261,6 +193,7 @@ const Dashboard = () => {
         <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
       </div>
 
+      {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -295,7 +228,7 @@ const Dashboard = () => {
             ) : (
               <>
                 <div className="text-2xl font-bold">
-                  ${todaysRevenue.toFixed(2)}
+                  ₱{todaysRevenue.toFixed(2)}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   +10.1% from yesterday
@@ -345,10 +278,10 @@ const Dashboard = () => {
         </Card>
       </div>
 
+      {/* Orders Tabs */}
       <Tabs defaultValue="active" className="space-y-4">
         <TabsList>
           <TabsTrigger value="active">Active Orders</TabsTrigger>
-          <TabsTrigger value="forPayment">For Payment</TabsTrigger>
           <TabsTrigger value="completed">Completed Orders</TabsTrigger>
         </TabsList>
 
@@ -360,7 +293,7 @@ const Dashboard = () => {
           ) : (
             <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-4">
               {Object.entries(groupOrdersByTable(activeOrders)).map(
-                ([tableNumber, tableOrders]) => (
+                ([tableNumber, tableOrder]) => (
                   <Card key={tableNumber} className="p-4 h-full">
                     <div className="flex flex-col h-full">
                       {/* Table Header */}
@@ -370,233 +303,153 @@ const Dashboard = () => {
                             Table {tableNumber}
                           </h3>
                           <p className="text-sm text-muted-foreground">
-                            {tableOrders.length} active order
-                            {tableOrders.length !== 1 ? 's' : ''}
+                            {tableOrder?.orders?.length || 0} orders
                           </p>
                         </div>
-                        <Badge
-                          variant={
-                            tableOrders.length > 0 ? 'default' : 'secondary'
-                          }
-                        >
-                          {tableOrders.length > 0 ? 'Occupied' : 'Available'}
+                        <Badge variant={tableOrder ? 'default' : 'secondary'}>
+                          {tableOrder ? 'Occupied' : 'Available'}
                         </Badge>
                       </div>
 
-                      {/* Table Total */}
-                      {tableOrders.length > 0 && (
-                        <div className="mb-4 p-3 bg-muted/10 rounded-lg">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm text-muted-foreground">
-                              Table Total
-                            </span>
-                            <span className="text-lg font-bold">
-                              ₱{calculateTableTotal(tableOrders).toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
                       {/* Orders List */}
-                      {tableOrders.length > 0 && (
-                        <Accordion type="single" collapsible className="w-full">
-                          {tableOrders.map((order) => (
-                            <AccordionItem key={order._id} value={order._id}>
+                      {tableOrder && (
+                        <Accordion
+                          type="single"
+                          collapsible
+                          className="w-full"
+                          value={expandedItems[tableNumber]}
+                          onValueChange={(value) =>
+                            setExpandedItems((prev) => ({
+                              ...prev,
+                              [tableNumber]: value,
+                            }))
+                          }
+                        >
+                          {tableOrder.orders.map((order) => (
+                            <AccordionItem
+                              key={`${tableNumber}-${order.orderNumber}`}
+                              value={`${tableNumber}-${order.orderNumber}`}
+                            >
                               <AccordionTrigger className="hover:no-underline">
                                 <div className="flex items-center justify-between w-full">
                                   <div className="flex items-center gap-2">
                                     <StatusIcon status={order.status} />
-                                    <span>Order #{order._id.slice(-4)}</span>
+                                    <span>Order #{order.orderNumber}</span>
                                     <span className="text-sm text-muted-foreground">
-                                      (₱{order.total.toFixed(2)})
+                                      (₱{order.orderTotal.toFixed(2)})
                                     </span>
                                   </div>
                                   <Badge
                                     variant={
-                                      order.items.some(
-                                        (item) =>
-                                          item.isUnliwings &&
-                                          item.flavorOrderStatus ===
-                                            'flavor_accepted'
-                                      )
+                                      order.status === 'accepted'
                                         ? 'success'
                                         : 'default'
                                     }
-                                    className="ml-2"
                                   >
-                                    {order.items.some(
-                                      (item) =>
-                                        item.isUnliwings &&
-                                        item.flavorOrderStatus ===
-                                          'flavor_accepted'
-                                    )
-                                      ? 'Accepted'
-                                      : order.status}
+                                    {order.status}
                                   </Badge>
                                 </div>
                               </AccordionTrigger>
                               <AccordionContent>
                                 <div className="space-y-4 p-2">
-                                  {order.items
-                                    .filter(
-                                      (item) =>
-                                        !item.originalOrderId ||
-                                        item.originalOrderId === order._id ||
-                                        item.isUnliwings
-                                    )
-                                    .map((item, idx) => (
-                                      <div
-                                        key={idx}
-                                        className={cn(
-                                          'p-3 rounded-lg',
-                                          item.isUnliwings &&
-                                            'border border-blue-200 bg-blue-50'
-                                        )}
-                                      >
-                                        <div className="flex justify-between items-start">
-                                          <div>
-                                            <p className="font-medium">
-                                              {item.name}
-                                            </p>
-                                            {item.isUnliwings && (
-                                              <div className="text-sm text-muted-foreground mt-1">
-                                                <p>
-                                                  Current Flavors:{' '}
-                                                  {item.selectedFlavors?.join(
-                                                    ', '
-                                                  )}
-                                                </p>
-                                                {item.flavorHistory?.length >
-                                                  0 && (
-                                                  <div className="mt-1">
-                                                    <p>Previous Orders:</p>
-                                                    {item.flavorHistory.map(
-                                                      (flavors, i) => (
-                                                        <p
-                                                          key={i}
-                                                          className="ml-2"
-                                                        >
-                                                          #{i + 1}:{' '}
-                                                          {flavors.join(', ')}
-                                                        </p>
-                                                      )
-                                                    )}
-                                                  </div>
-                                                )}
-                                                <p className="mt-1">
-                                                  Quantity:{' '}
-                                                  {item.originalQuantity ||
-                                                    item.quantity}
-                                                </p>
-                                              </div>
-                                            )}
-                                          </div>
+                                  {order.items.map((item, idx) => (
+                                    <div
+                                      key={`${tableNumber}-${
+                                        order.orderNumber
+                                      }-${item._id || `item-${idx}`}`}
+                                      className={cn(
+                                        'p-3 rounded-lg',
+                                        item.isUnliwings &&
+                                          'border border-blue-200 bg-blue-50'
+                                      )}
+                                    >
+                                      <div className="flex justify-between items-start">
+                                        <div>
                                           <p className="font-medium">
-                                            ₱
-                                            {item.isUnliwings &&
-                                            item.flavorHistory?.length > 0
-                                              ? '0.00' // Show zero for re-orders
-                                              : (
-                                                  item.price *
-                                                  (item.originalQuantity ||
-                                                    item.quantity)
-                                                ).toFixed(2)}
+                                            {item.name}
                                           </p>
-                                        </div>
-
-                                        {/* Accept Flavor Button */}
-                                        {item.isUnliwings &&
-                                          item.flavorOrderStatus ===
-                                            'flavor_pending' && (
-                                            <div className="mt-2">
-                                              <Button
-                                                size="sm"
-                                                onClick={() =>
-                                                  handleStatusUpdate(
-                                                    order._id,
-                                                    'accepted'
-                                                  )
-                                                }
-                                                variant="outline"
-                                              >
-                                                Accept New Flavors
-                                              </Button>
+                                          {item.isUnliwings && (
+                                            <div className="text-sm text-muted-foreground mt-1">
+                                              <p>
+                                                Selected Flavors:{' '}
+                                                {item.selectedFlavors?.join(
+                                                  ', '
+                                                )}
+                                              </p>
+                                              <p>Quantity: {item.quantity}</p>
                                             </div>
                                           )}
+                                        </div>
+                                        <p className="font-medium">
+                                          ₱
+                                          {(item.price * item.quantity).toFixed(
+                                            2
+                                          )}
+                                        </p>
                                       </div>
-                                    ))}
-                                  {/* Individual Order Total */}
+                                    </div>
+                                  ))}
+
+                                  {/* Order Total */}
                                   <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="font-semibold">
                                       Order Total:
                                     </span>
                                     <span className="font-bold">
-                                      ₱
-                                      {order.items
-                                        .reduce((sum, item) => {
-                                          if (item.isUnliwings) {
-                                            return item.flavorHistory?.length >
-                                              0
-                                              ? sum
-                                              : sum +
-                                                  item.price *
-                                                    (item.originalQuantity ||
-                                                      item.quantity);
-                                          }
-                                          if (
-                                            !item.originalOrderId ||
-                                            item.originalOrderId === order._id
-                                          ) {
-                                            return (
-                                              sum + item.price * item.quantity
-                                            );
-                                          }
-                                          return sum;
-                                        }, 0)
-                                        .toFixed(2)}
+                                      ₱{order.orderTotal.toFixed(2)}
                                     </span>
                                   </div>
+
+                                  {/* Accept Order Button */}
+                                  {order.status === 'preparing' && (
+                                    <Button
+                                      onClick={() =>
+                                        handleStatusUpdate(
+                                          tableNumber,
+                                          order.orderNumber,
+                                          'accepted'
+                                        )
+                                      }
+                                      className="mt-4 w-full"
+                                      variant="outline"
+                                    >
+                                      Accept Order
+                                    </Button>
+                                  )}
                                 </div>
                               </AccordionContent>
                             </AccordionItem>
                           ))}
                         </Accordion>
                       )}
+
+                      {/* Payment Section */}
+                      {tableOrder && (
+                        <div className="mt-4 p-3 bg-muted/10 rounded-lg">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm text-muted-foreground">
+                              Table Total
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg font-bold">
+                                ₱{tableOrder.grandTotal.toFixed(2)}
+                              </span>
+                              <Button
+                                onClick={() => handleTablePayment(tableNumber)}
+                                variant="outline"
+                                size="sm"
+                              >
+                                Process Payment
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </Card>
                 )
               )}
             </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="forPayment" className="space-y-4">
-          {loading ? (
-            <div className="flex justify-center items-center h-32">
-              <Loading />
-            </div>
-          ) : (
-            <>
-              {orders.filter(
-                (order) => order.status === 'completed' && !order.isPaid
-              ).length === 0 ? (
-                <EmptyState
-                  icon={CreditCard}
-                  title="No Orders for Payment"
-                  description="Orders awaiting payment will appear here"
-                />
-              ) : (
-                <OrdersList
-                  orders={orders.filter(
-                    (order) => order.status === 'completed' && !order.isPaid
-                  )}
-                  onStatusUpdate={handleStatusUpdate}
-                  onPayment={handleTablePayment}
-                  className="mt-4"
-                  isPaymentView={true}
-                />
-              )}
-            </>
           )}
         </TabsContent>
 
@@ -607,8 +460,7 @@ const Dashboard = () => {
             </div>
           ) : (
             <>
-              {orders.filter((order) => order.status === 'paid').length ===
-              0 ? (
+              {orders.filter((order) => order.isPaid).length === 0 ? (
                 <EmptyState
                   icon={CheckCircle}
                   title="No Completed Orders"
@@ -616,9 +468,7 @@ const Dashboard = () => {
                 />
               ) : (
                 <OrdersList
-                  orders={orders.filter((order) => order.status === 'paid')}
-                  onStatusUpdate={handleStatusUpdate}
-                  onPayment={handleTablePayment}
+                  orders={orders.filter((order) => order.isPaid)}
                   className="mt-4"
                   isPaymentView={false}
                 />

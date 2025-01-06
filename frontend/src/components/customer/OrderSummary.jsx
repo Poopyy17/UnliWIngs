@@ -9,86 +9,74 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useOrder } from '../../../context/orderContext';
 import { useState, useEffect } from 'react';
-import { getOrder } from '@/services/api';
 import { motion } from 'framer-motion';
-import { Loader2, Plus, Receipt, ArrowRight } from 'lucide-react';
+import { Loader2, Plus, Receipt } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { getOrder } from '@/services/api';
+
+const ORDER_TYPES = {
+  UNLIWINGS: 'unliwings',
+  REGULAR: 'regular',
+  REORDER: 'reorder',
+};
 
 const OrderSummary = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const { state, dispatch } = useOrder();
-  const { tableNumber, orderId, currentItems: newItems } = location.state || {};
+  const { tableNumber, orderId, orders } = location.state || {};
   const [orderDetails, setOrderDetails] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const isUnliwingsItem = (item) => item.isUnliwings === true;
+  const formatTableNumber = (number) => {
+    return number?.toString().replace('Table-', '');
+  };
 
-  // Update fetchOrderDetails function
+  const getItemKey = (item) => {
+    return `${item._id || item.id}-${item.orderSequence || 1}`;
+  };
+
+  const determineOrderType = (item) => {
+    if (!item.isUnliwings) return ORDER_TYPES.REGULAR;
+    return item.orderSequence > 1 ? ORDER_TYPES.REORDER : ORDER_TYPES.UNLIWINGS;
+  };
+
   const fetchOrderDetails = async () => {
     if (!orderId) return;
     try {
       setIsLoading(true);
-      const order = await getOrder(orderId);
+      const response = await getOrder(orderId);
 
-      if (newItems?.length > 0) {
-        const existingUnliwings = order.items.find(isUnliwingsItem);
-        const newUnliwings = newItems.find(isUnliwingsItem);
-
-        let mergedItems = [...order.items];
-
-        newItems.forEach((newItem) => {
-          // Add timestamp to new items
-          const itemWithTimestamp = {
-            ...newItem,
-            timestamp: new Date(),
-            orderId: orderId, // Ensure orderId is set for new items
-          };
-
-          if (newItem.isUnliwings) {
-            const existingIndex = mergedItems.findIndex(
-              (item) => item.isUnliwings && !item.flavorHistory?.length
-            );
-            if (existingIndex !== -1) {
-              mergedItems[existingIndex] = {
-                ...itemWithTimestamp,
-                flavorHistory: [
-                  ...(existingUnliwings?.flavorHistory || []),
-                  existingUnliwings?.selectedFlavors,
-                ],
-                originalQuantity:
-                  existingUnliwings?.originalQuantity || newItem.quantity,
-              };
-            } else {
-              mergedItems.push(itemWithTimestamp);
-            }
-          } else {
-            mergedItems.push(itemWithTimestamp);
-          }
-        });
-
-        setOrderDetails({
-          ...order,
-          items: mergedItems,
-        });
-
-        // Update global state
-        dispatch({
-          type: 'UPDATE_ITEMS',
-          tableNumber,
-          items: mergedItems,
-          orderId: order._id,
-        });
-      } else {
-        setOrderDetails(order);
+      if (!response) {
+        throw new Error('No order found');
       }
+
+      const cleanTableNumber = formatTableNumber(tableNumber);
+
+      // Process items with hasInitialUnliwings check
+      const processedItems = (response.orders || []).map((order) => ({
+        ...order,
+        items: order.items.map((item) => ({
+          ...item,
+          orderType: determineOrderType(item),
+          orderSequence: item.orderSequence || 1,
+          flavorHistory: item.flavorHistory || [],
+        })),
+      }));
+
+      setOrderDetails({
+        ...response,
+        orders: processedItems,
+        tableNumber: cleanTableNumber,
+        hasInitialUnliwings: response.hasInitialUnliwings,
+      });
     } catch (error) {
-      console.error('Failed to fetch order:', error);
+      console.error('Order fetch error:', error);
       toast({
         title: 'Error',
-        description: 'Failed to load order details',
+        description: error.message || 'Failed to load order',
         variant: 'destructive',
       });
     } finally {
@@ -97,52 +85,28 @@ const OrderSummary = () => {
   };
 
   useEffect(() => {
-    console.log('OrderSummary mounted with:', {
-      orderId,
-      tableNumber,
-      newItems,
-    });
     fetchOrderDetails();
   }, [orderId]);
 
-  const accumulatedOrders =
-    orderDetails?.items || state.orders[tableNumber] || [];
-
   const calculateTotal = () => {
-    return accumulatedOrders.reduce((total, item) => {
-      if (item.isUnliwings) {
-        // For Unliwings - only charge initial order
-        const isReorder = item.flavorHistory?.length > 0;
-        return isReorder
-          ? total
-          : total + item.price * (item.originalQuantity || item.quantity);
-      }
-      // For non-Unliwings - only include current order items
-      if (!item.originalOrderId || item.originalOrderId === orderId) {
-        return total + item.price * item.quantity;
-      }
-      return total;
+    if (!orderDetails?.orders) return 0;
+
+    return orderDetails.orders.reduce((total, order) => {
+      return (
+        total +
+        order.items.reduce((orderTotal, item) => {
+          // Only make reorders free if hasInitialUnliwings is true
+          if (
+            item.isUnliwings &&
+            orderDetails.hasInitialUnliwings &&
+            item.orderSequence > 1
+          ) {
+            return orderTotal;
+          }
+          return orderTotal + item.price * item.quantity;
+        }, 0)
+      );
     }, 0);
-  };
-
-  const confirmOrder = () => {
-    if (!orderId) {
-      toast({
-        title: 'Error',
-        description: 'Order ID is missing',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    navigate('/bill', {
-      state: {
-        orderItems: orderDetails?.items || accumulatedOrders,
-        tableNumber,
-        orderId,
-        total: calculateTotal(),
-      },
-    });
   };
 
   const handleAddMoreItems = () => {
@@ -150,18 +114,22 @@ const OrderSummary = () => {
       state: {
         tableNumber,
         orderId,
-        currentItems: accumulatedOrders,
+        currentItems:
+          orderDetails?.orders?.flatMap((order) => order.items) || [],
       },
     });
   };
 
-  if (!tableNumber) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        <p className="text-muted-foreground">No table selected</p>
-      </div>
-    );
-  }
+  const confirmOrder = () => {
+    navigate('/bill', {
+      state: {
+        orderId,
+        tableNumber,
+        orders: orderDetails?.orders || [],
+        total: calculateTotal(),
+      },
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20">
@@ -178,7 +146,7 @@ const OrderSummary = () => {
                   Order Summary
                 </h2>
                 <Badge variant="outline" className="font-medium">
-                  Table {tableNumber}
+                  {tableNumber}
                 </Badge>
               </div>
             </CardHeader>
@@ -190,83 +158,87 @@ const OrderSummary = () => {
                 </div>
               ) : (
                 <div className="space-y-6">
-                  {accumulatedOrders
-                    .filter(
-                      (item) =>
-                        item.isUnliwings ||
-                        !item.originalOrderId ||
-                        item.originalOrderId === orderId
-                    )
-                    .map((item, index) => (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ delay: index * 0.1 }}
-                      >
-                        <div className="flex justify-between items-start">
-                          <div className="space-y-1">
-                            <h3 className="font-medium">
-                              {item.name}
-                              {item.isUnliwings && (
-                                <span className="text-sm text-muted-foreground ml-2">
-                                  ({item.originalQuantity || item.quantity}{' '}
-                                  {(item.originalQuantity || item.quantity) > 1
-                                    ? 'persons'
-                                    : 'person'}
-                                  )
-                                </span>
-                              )}
-                            </h3>
-                            <div className="flex items-center text-sm text-muted-foreground">
-                              <span>
-                                ₱{item.price.toFixed(2)} ×{' '}
-                                {item.isUnliwings
-                                  ? item.originalQuantity || item.quantity
-                                  : item.quantity}
-                              </span>
-                            </div>
-                            {item.isUnliwings && (
-                              <div className="space-y-2 mt-2">
-                                <div className="text-sm text-muted-foreground">
-                                  <span className="font-medium">
-                                    Current Order:
-                                  </span>{' '}
-                                  {item.selectedFlavors?.join(', ')}
-                                </div>
-                                {item.flavorHistory?.length > 0 && (
-                                  <div className="text-sm space-y-1">
-                                    <span className="font-medium text-muted-foreground">
-                                      Previous Orders:
-                                    </span>
-                                    {item.flavorHistory.map((flavors, idx) => (
-                                      <div
-                                        key={idx}
-                                        className="text-xs text-muted-foreground pl-2"
-                                      >
-                                        #{idx + 1}: {flavors.join(', ')}
-                                      </div>
-                                    ))}
-                                  </div>
+                  {orderDetails?.orders?.map((order, orderIndex) => (
+                    <motion.div
+                      key={order._id || orderIndex}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: orderIndex * 0.1 }}
+                    >
+                      {/* Add order timestamp */}
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="font-medium text-sm text-muted-foreground">
+                          Order #{orderIndex + 1}
+                        </h3>
+                        <span className="text-sm text-muted-foreground">
+                          {new Date(order.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+
+                      {order.items.map((item, itemIndex) => (
+                        <div key={`${item._id}-${itemIndex}`} className="mb-4">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-medium">{item.name}</h3>
+                                {item.isUnliwings && (
+                                  <Badge variant="outline">
+                                    {item.orderType}
+                                  </Badge>
                                 )}
                               </div>
-                            )}
+                              {item.selectedFlavors?.length > 0 && (
+                                <p className="text-sm text-muted-foreground">
+                                  Flavors: {item.selectedFlavors.join(', ')}
+                                </p>
+                              )}
+                              {item.flavorHistory?.length > 0 && (
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  <p>Previous orders:</p>
+                                  {item.flavorHistory.map((flavors, idx) => (
+                                    <p key={idx} className="ml-2">
+                                      #{idx + 1}: {flavors.join(', ')}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <p>
+                                {item.quantity}x
+                                {item.isUnliwings &&
+                                item.orderSequence > 1 &&
+                                orderDetails.hasInitialUnliwings ? (
+                                  <span className="text-green-600"> FREE</span>
+                                ) : (
+                                  <span> ₱{item.price.toFixed(2)}</span>
+                                )}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {item.isUnliwings &&
+                                orderDetails.hasInitialUnliwings &&
+                                item.orderSequence > 1 ? (
+                                  <span>FREE</span>
+                                ) : (
+                                  <span>
+                                    Total: ₱
+                                    {(item.price * item.quantity).toFixed(2)}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
                           </div>
-                          <p className="font-medium">
-                            ₱
-                            {(
-                              item.price *
-                              (item.isUnliwings
-                                ? item.originalQuantity || item.quantity
-                                : item.quantity)
-                            ).toFixed(2)}
-                          </p>
+                          {itemIndex < order.items.length - 1 && (
+                            <Separator className="my-4" />
+                          )}
                         </div>
-                        {index < accumulatedOrders.length - 1 && (
-                          <Separator className="my-4" />
-                        )}
-                      </motion.div>
-                    ))}
+                      ))}
+
+                      {orderIndex < orderDetails.orders.length - 1 && (
+                        <Separator className="my-6" />
+                      )}
+                    </motion.div>
+                  ))}
                 </div>
               )}
             </CardContent>

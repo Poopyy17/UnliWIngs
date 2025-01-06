@@ -3,18 +3,24 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { generateReceipt, getOrder } from '@/services/api';
 import { useState, useEffect } from 'react';
 import { useOrder } from '../../../context/orderContext';
 import { motion } from 'framer-motion';
 import { Loader2, Receipt, ShoppingBag, ArrowLeft } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
+import { getOrder, generateReceipt } from '../../services/api';
 
 const OrderStatus = {
   PENDING: 'pending',
   PREPARING: 'preparing',
   COMPLETED: 'completed',
   PAID: 'paid',
+};
+
+const ORDER_TYPES = {
+  UNLIWINGS: 'unliwings',
+  REGULAR: 'regular',
+  REORDER: 'reorder',
 };
 
 const StatusBadge = ({ status }) => {
@@ -36,22 +42,76 @@ const BillOut = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { dispatch } = useOrder();
-  const {
-    orderItems: initialItems,
-    tableNumber,
-    total: initialTotal,
-    orderId,
-  } = location.state || {};
+  const { tableNumber, orderId } = location.state || {};
 
   const [isLoading, setIsLoading] = useState(false);
+
   const [orderState, setOrderState] = useState({
-    items: initialItems ? [...initialItems] : [],
-    total: initialTotal || 0,
-    status: null,
+    items: [],
+    total: 0,
+    status: 'preparing',
     receiptNumber: null,
   });
 
-  const isUnliwingsItem = (item) => item.isUnliwings === true;
+  const calculateTotal = () => {
+    const items = orderState.items || [];
+
+    // Find if there's an initial unliwings order
+    const hasInitialUnliwings = items.some(
+      (item) => item.isUnliwings && item.orderSequence === 1
+    );
+
+    return items.reduce((total, item) => {
+      // Skip charging for unliwings reorders if initial order exists
+      if (item.isUnliwings && hasInitialUnliwings && item.orderSequence > 1) {
+        return total;
+      }
+      return total + item.price * item.quantity;
+    }, 0);
+  };
+
+  const calculateItemTotal = (item) => {
+    // Check for initial unliwings order
+    const hasInitialUnliwings = orderState.items.some(
+      (i) => i.isUnliwings && i.orderSequence === 1
+    );
+
+    // Make reorders free if there's an initial order
+    if (item.isUnliwings && hasInitialUnliwings && item.orderSequence > 1) {
+      return 0;
+    }
+    return item.price * item.quantity;
+  };
+
+  const calculateGrandTotal = () => {
+    const items = orderState.items || [];
+
+    // Get initial unliwings total
+    const initialUnliwingsTotal = items
+      .filter((item) => item.isUnliwings && item.orderSequence === 1)
+      .reduce((total, item) => total + item.price * item.quantity, 0);
+
+    // Get regular orders total
+    const regularOrdersTotal = items
+      .filter((item) => !item.isUnliwings)
+      .reduce((total, item) => total + item.price * item.quantity, 0);
+
+    return initialUnliwingsTotal + regularOrdersTotal;
+  };
+
+  const mergeOrderItems = (existingItems, newItems) => {
+    const merged = [...existingItems];
+    newItems.forEach((newItem) => {
+      const existingIndex = merged.findIndex(
+        (item) =>
+          item.id === newItem.id && item.orderSequence === newItem.orderSequence
+      );
+      if (existingIndex === -1) {
+        merged.push(newItem);
+      }
+    });
+    return merged;
+  };
 
   const showGenerateReceiptButton =
     !orderState.receiptNumber && orderState.status !== OrderStatus.PAID;
@@ -59,80 +119,53 @@ const BillOut = () => {
   const showProceedToCounter =
     orderState.receiptNumber && orderState.status !== OrderStatus.PAID;
 
-  const groupOrdersByNumber = (items) => {
-    if (!items?.length) return [];
+  const groupOrders = (items) => {
+    return items.reduce((acc, item) => {
+      // Create unique key for each order sequence
+      const orderKey = `${item.orderSequence || 1}-${
+        item.isUnliwings ? 'unli' : 'reg'
+      }`;
 
-    // Group items by their timestamp
-    const orderGroups = items.reduce((acc, item) => {
-      const timestamp = item.timestamp?.toString() || Date.now().toString();
-
-      if (!acc[timestamp]) {
-        acc[timestamp] = {
-          id: `order-${timestamp}`,
+      if (!acc[orderKey]) {
+        acc[orderKey] = {
+          sequence: item.orderSequence || 1,
+          timestamp: item.timestamp || Date.now(),
           items: [],
-          orderNumber: Object.keys(acc).length + 1,
-          timestamp: new Date(Number(timestamp)),
+          type: item.isUnliwings
+            ? item.orderSequence > 1
+              ? 'reorder'
+              : 'unliwings'
+            : 'regular',
           total: 0,
+          flavorHistory: item.flavorHistory || [],
         };
       }
-      acc[timestamp].items.push(item);
+
+      // Only add if not already in group
+      const itemExists = acc[orderKey].items.some(
+        (existing) => existing.id === item.id
+      );
+
+      if (!itemExists) {
+        acc[orderKey].items.push(item);
+        acc[orderKey].total += calculateItemTotal(item);
+      }
+
       return acc;
     }, {});
-
-    // Calculate total for each order group
-    Object.values(orderGroups).forEach((group) => {
-      group.total = group.items.reduce((sum, item) => {
-        if (item.isUnliwings) {
-          return item.flavorHistory?.length > 0
-            ? sum
-            : sum + item.price * (item.originalQuantity || item.quantity);
-        }
-        return sum + item.price * item.quantity;
-      }, 0);
-    });
-
-    return Object.values(orderGroups).sort((a, b) => a.timestamp - b.timestamp);
   };
 
-  const groupOrders = (items) => {
-    if (!items) return {};
-
-    const grouped = items.reduce((acc, item) => {
-      if (item.isUnliwings) {
-        // Handle Unliwings items
-        if (!item.flavorHistory?.length) {
-          // Initial order
-          if (!acc.initial) acc.initial = [];
-          acc.initial.push({
-            ...item,
-            isInitial: true,
-          });
-        } else {
-          // Reorders
-          if (!acc.reorders) acc.reorders = [];
-          // Add current order
-          acc.reorders.push({
-            ...item,
-            selectedFlavors: item.selectedFlavors,
-          });
-          // Add flavor history
-          item.flavorHistory.forEach((flavors, index) => {
-            acc.reorders.push({
-              ...item,
-              selectedFlavors: flavors,
-              orderNumber: index + 1,
-            });
-          });
-        }
-      } else {
-        // Regular items
-        if (!acc.regular) acc.regular = [];
-        acc.regular.push(item);
-      }
-      return acc;
-    }, {});
-
-    return grouped;
+  const sortOrders = (orders) => {
+    return Object.entries(orders)
+      .sort(([keyA], [keyB]) => {
+        const [seqA] = keyA.split('-');
+        const [seqB] = keyB.split('-');
+        return parseInt(seqA) - parseInt(seqB);
+      })
+      .map(([key, order]) => ({
+        id: key,
+        ...order,
+      }));
   };
 
   const formatDate = () => {
@@ -150,94 +183,65 @@ const BillOut = () => {
 
     const fetchOrderStatus = async () => {
       try {
+        setIsLoading(true);
         const order = await getOrder(orderId);
 
-        setOrderState((prev) => {
-          // Check if we have new items to add
-          const hasNewItems = order.items.some(
-            (newItem) =>
-              !prev.items.some(
-                (existingItem) =>
-                  existingItem.orderId === newItem.orderId &&
-                  existingItem.timestamp === newItem.timestamp
-              )
-          );
+        if (!order) {
+          throw new Error('Order not found');
+        }
 
-          if (hasNewItems || order.status !== prev.status) {
-            const mergedItems = mergeOrders(prev.items, order.items);
-            return {
-              ...prev,
-              items: mergedItems,
-              status: order.status,
-              receiptNumber: order.receiptNumber || null,
-            };
-          }
-          return prev;
-        });
+        const items =
+          order.orders?.flatMap((orderItem) =>
+            orderItem.items?.map((item) => ({
+              ...item,
+              id: item._id,
+              orderSequence: item.orderSequence || 1,
+              timestamp: orderItem.createdAt || Date.now(),
+              orderType: item.isUnliwings
+                ? item.orderSequence > 1
+                  ? 'reorder'
+                  : 'unliwings'
+                : 'regular',
+              tableNumber: order.tableNumber,
+            }))
+          ) || [];
+
+        setOrderState((prev) => ({
+          ...prev,
+          items,
+          status: order.status,
+          receiptNumber: order.receiptNumber || null,
+          total: calculateTotal(items), // Use updated calculateTotal here
+          tableNumber: order.tableNumber,
+        }));
       } catch (error) {
-        console.error('Failed to fetch order status:', error);
+        console.error('Fetch error:', error);
         toast({
           title: 'Error',
-          description: 'Failed to fetch order status',
+          description: error.message || 'Failed to fetch order status',
           variant: 'destructive',
         });
+      } finally {
+        setIsLoading(false);
       }
     };
 
     fetchOrderStatus();
-    return () => {};
-  }, [orderId]);
-
-  const mergeOrders = (existingItems, newItems) => {
-    if (!existingItems?.length) {
-      return newItems.map((item) => ({
-        ...item,
-        timestamp: Date.now(),
-      }));
-    }
-
-    // Create timestamp for this batch of new items
-    const batchTimestamp = Date.now();
-
-    // Keep existing items unchanged
-    const merged = [...existingItems];
-
-    // Add new items with new timestamp
-    const newItemsWithTimestamp = newItems.map((newItem) => ({
-      ...newItem,
-      timestamp: batchTimestamp,
-      originalQuantity: newItem.quantity,
-      price: newItem.price,
-      flavorHistory: newItem.flavorHistory || [],
-    }));
-
-    return [...merged, ...newItemsWithTimestamp];
-  };
+  }, [orderId, toast]);
 
   const handleOrderAgain = () => {
-    const existingUnliwings = orderState.items.find((item) => item.isUnliwings);
-
-    let itemsToPass;
-    if (existingUnliwings) {
-      itemsToPass = orderState.items.map((item) => {
-        if (item.isUnliwings) {
-          return {
-            ...item,
-            selectedFlavors: [],
-            flavorHistory: [
-              ...(item.flavorHistory || []),
-              item.selectedFlavors,
-            ],
-            flavorOrderStatus: 'flavor_pending',
-            price: item.price,
-            originalQuantity: item.originalQuantity || item.quantity,
-          };
-        }
-        return item;
-      });
-    } else {
-      itemsToPass = orderState.items.filter((item) => !isUnliwingsItem(item));
-    }
+    const itemsToPass = orderState.items.map((item) => ({
+      ...item,
+      orderItemId: `${item.id}-${Date.now()}-${Math.random()}`,
+      timestamp: Date.now(),
+      ...(item.isUnliwings && {
+        selectedFlavors: [],
+        flavorHistory: [...(item.flavorHistory || []), item.selectedFlavors],
+        flavorOrderStatus: 'flavor_pending',
+        orderSequence: Number(item.orderSequence || 1) + 1,
+        orderType: ORDER_TYPES.REORDER,
+      }),
+    }));
 
     navigate('/order', {
       state: {
@@ -251,20 +255,13 @@ const BillOut = () => {
   const handlePayBill = async () => {
     try {
       setIsLoading(true);
-      if (!tableNumber) {
-        toast({
-          title: 'Error',
-          description: 'Table number is required',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      const cleanTableNumber = tableNumber.toString().replace('Table-', '');
+      const cleanTableNumber = tableNumber?.toString().replace(/^Table-/, '');
+      const total = calculateTotal(orderState.items);
 
       const receipt = await generateReceipt({
         tableNumber: cleanTableNumber,
         orderId,
+        total, // Add total to payload
       });
 
       setOrderState((prev) => ({
@@ -273,7 +270,6 @@ const BillOut = () => {
         status: 'completed',
       }));
 
-      // Clear table orders
       dispatch({
         type: 'CLEAR_TABLE',
         tableNumber: cleanTableNumber,
@@ -295,25 +291,6 @@ const BillOut = () => {
     }
   };
 
-  const calculateTotal = (items) => {
-    if (!items) return 0;
-
-    return items.reduce((sum, item) => {
-      if (item.isUnliwings) {
-        // For Unliwings, only charge initial order
-        const isInitialOrder = !item.flavorHistory?.length;
-        return isInitialOrder
-          ? sum + item.price * (item.originalQuantity || item.quantity)
-          : sum;
-      }
-      return sum + item.price * item.quantity;
-    }, 0);
-  };
-
-  const calculateGrandTotal = (orders) => {
-    return orders.reduce((sum, order) => sum + order.total, 0);
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/20 py-8">
       <div className="container mx-auto px-4">
@@ -324,18 +301,22 @@ const BillOut = () => {
         >
           <Card className="overflow-hidden shadow-lg">
             <div className="p-6 space-y-6">
+              {/* Header Section */}
               <div className="text-center space-y-2">
                 <h2 className="text-2xl font-bold tracking-tight">
-                  Restaurant Name
+                  Wings Express
                 </h2>
                 <div className="text-sm text-muted-foreground">
-                  <p>123 Restaurant Street</p>
-                  <p>City, State 12345</p>
+                  <p>
+                    Blk 20 Lot 2 Marcos Alvarez Avenue, Corner San Gregorio St.
+                  </p>
+                  <p>Las Piñas, 1747 Metro Manila</p>
                 </div>
               </div>
 
               <Separator />
 
+              {/* Order Details */}
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Date:</span>
@@ -355,82 +336,212 @@ const BillOut = () => {
 
               <Separator />
 
-              <div className="space-y-4">
-                {groupOrdersByNumber(orderState.items).map((order) => (
-                  <div
-                    key={order.id}
-                    className="border rounded-lg p-4 space-y-4"
-                  >
-                    <div className="flex justify-between items-center">
-                      <h3 className="font-medium">
-                        Order #{order.orderNumber}
-                      </h3>
-                      <span className="text-sm text-muted-foreground">
-                        {new Date(order.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
+              {/* Orders Section */}
+              <div className="space-y-6">
+                {/* Initial Unliwings Orders */}
+                {orderState.items.some(
+                  (item) => item.isUnliwings && item.orderSequence === 1
+                ) && (
+                  <div className="space-y-4">
+                    {sortOrders(
+                      groupOrders(
+                        orderState.items.filter(
+                          (item) => item.isUnliwings && item.orderSequence === 1
+                        )
+                      )
+                    ).map((order) => (
+                      <Card key={order.id} className="p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h3 className="font-bold text-lg">
+                            Unliwings Order #{order.sequence}
+                            <span className="text-sm font-normal text-muted-foreground ml-2">
+                              {new Date(order.timestamp).toLocaleTimeString()}
+                            </span>
+                          </h3>
+                          <Badge variant="default">Initial Order</Badge>
+                        </div>
 
-                    <div className="space-y-2">
-                      {order.items.map((item, index) => (
-                        <div
-                          key={index}
-                          className="grid grid-cols-4 text-sm gap-4"
-                        >
-                          <div className="col-span-2">
-                            <div className="font-medium">{item.name}</div>
-                            {item.isUnliwings && (
-                              <div className="text-xs text-muted-foreground mt-1">
-                                <div>
-                                  Selected: {item.selectedFlavors?.join(', ')}
-                                </div>
-                                {item.flavorHistory?.length > 0 && (
-                                  <div className="text-xs text-blue-500">
-                                    (Reorder - No Charge)
-                                  </div>
-                                )}
-                                <div>
-                                  ({item.originalQuantity || item.quantity}{' '}
-                                  persons)
-                                </div>
+                        {order.items.map((item, idx) => (
+                          <div key={`${item.id}-${idx}`} className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <div className="font-medium">
+                                {item.name} (
+                                {item.originalQuantity || item.quantity}{' '}
+                                persons)
                               </div>
-                            )}
+                              <div className="text-right">
+                                <p>
+                                  {item.quantity}x ₱{item.price.toFixed(2)}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  Total: ₱
+                                  {(item.price * item.quantity).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2 text-sm pl-4">
+                              <div className="flex justify-between">
+                                <span>Selected Flavors:</span>
+                                <span className="font-medium">
+                                  {item.selectedFlavors?.join(', ')}
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            {item.originalQuantity || item.quantity}x
-                          </div>
-                          <div className="text-right">
-                            ₱
-                            {(item.isUnliwings
-                              ? item.flavorHistory?.length > 0
-                                ? 0
-                                : item.price *
-                                  (item.originalQuantity || item.quantity)
-                              : item.price * item.quantity
-                            ).toFixed(2)}
+                        ))}
+
+                        <div className="flex justify-end pt-3 border-t mt-3">
+                          <div className="font-medium">
+                            Total: ₱{order.total.toFixed(2)}
                           </div>
                         </div>
-                      ))}
-                    </div>
-
-                    <div className="flex justify-end pt-2 border-t">
-                      <div className="text-sm font-medium">
-                        Order Total: ₱{order.total.toFixed(2)}
-                      </div>
-                    </div>
+                      </Card>
+                    ))}
                   </div>
-                ))}
+                )}
 
-                <Separator />
+                {/* Unliwings Reorders */}
+                {orderState.items.some(
+                  (item) => item.isUnliwings && item.orderSequence > 1
+                ) && (
+                  <div className="space-y-4">
+                    {sortOrders(
+                      groupOrders(
+                        orderState.items.filter(
+                          (item) => item.isUnliwings && item.orderSequence > 1
+                        )
+                      )
+                    ).map((order) => (
+                      <Card key={order.id} className="p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h3 className="font-bold text-lg">
+                            Unliwings Re-orders
+                            <span className="text-sm font-normal text-muted-foreground ml-2">
+                              {new Date(order.timestamp).toLocaleTimeString()}
+                            </span>
+                          </h3>
+                          <Badge variant="secondary">Reorder (Free)</Badge>
+                        </div>
 
-                {/* Grand Total */}
-                <div className="flex justify-between items-center text-lg font-bold">
-                  <span>Grand Total</span>
-                  <span>
-                    ₱
-                    {calculateGrandTotal(
-                      groupOrdersByNumber(orderState.items)
-                    ).toFixed(2)}
-                  </span>
+                        {order.items.map((item, idx) => (
+                          <div key={`${item.id}-${idx}`} className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <div className="font-medium">
+                                {item.name} (
+                                {item.originalQuantity || item.quantity}{' '}
+                                persons)
+                              </div>
+                              <div className="text-right">
+                                <p>
+                                  {item.quantity}x{' '}
+                                  <span className="text-green-600">FREE</span>
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2 text-sm pl-4">
+                              <div className="flex justify-between">
+                                <span>Selected Flavors:</span>
+                                <span className="font-medium">
+                                  {item.selectedFlavors?.join(', ')}
+                                </span>
+                              </div>
+                              {item.flavorHistory?.length > 0 && (
+                                <div>
+                                  <p>Previous Orders:</p>
+                                  {item.flavorHistory.map((flavors, index) => (
+                                    <p key={index} className="ml-2">
+                                      #{index + 1}: {flavors.join(', ')}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+
+                        <div className="flex justify-end pt-3 border-t mt-3">
+                          <div className="font-medium text-green-600">
+                            Free Reorder
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+
+                {/* Regular Orders */}
+                {orderState.items.some((item) => !item.isUnliwings) && (
+                  <div className="space-y-4">
+                    {sortOrders(
+                      groupOrders(
+                        orderState.items.filter((item) => !item.isUnliwings)
+                      )
+                    ).map((order) => (
+                      <Card key={order.id} className="p-4">
+                        <div className="flex justify-between items-center mb-3">
+                          <h3 className="font-bold text-lg">
+                            Regular Orders
+                            <span className="text-sm font-normal text-muted-foreground ml-2">
+                              {new Date(order.timestamp).toLocaleTimeString()}
+                            </span>
+                          </h3>
+                          <Badge variant="outline">
+                            {order.items[0]?.originalOrderId
+                              ? 'Additional Order'
+                              : 'New Order'}
+                          </Badge>
+                        </div>
+
+                        <div className="space-y-3">
+                          {order.items.map((item, idx) => (
+                            <div
+                              key={`${item.id}-${idx}`}
+                              className="grid grid-cols-3 text-sm gap-4 items-center"
+                            >
+                              <div className="col-span-2">
+                                <div className="font-medium">{item.name}</div>
+                                {item.selectedFlavors?.length > 0 && (
+                                  <div className="text-xs text-muted-foreground mt-1">
+                                    Flavors: {item.selectedFlavors.join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="col-span-1 text-right">
+                                <p>
+                                  {item.quantity}x ₱{item.price.toFixed(2)}
+                                </p>
+                                <p className="text-sm text-muted-foreground">
+                                  Total: ₱
+                                  {(item.price * item.quantity).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="flex justify-end pt-3 border-t mt-3">
+                            <div className="font-medium">
+                              Total: ₱{order.total.toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Grand Total Section */}
+              <div className="mt-8">
+                <Separator className="mb-4" />
+                <div className="flex justify-between items-center">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold">Grand Total</h3>
+                  </div>
+                  <div className="text-2xl font-bold">
+                    ₱{calculateGrandTotal().toFixed(2)}
+                  </div>
                 </div>
               </div>
 
@@ -481,7 +592,7 @@ const BillOut = () => {
                 </div>
               )}
 
-              {orderState === OrderStatus.PAID && (
+              {orderState.status === OrderStatus.PAID && (
                 <div className="text-center space-y-4">
                   <div className="p-4 bg-green-50 rounded-lg">
                     <p className="font-semibold text-green-600">
